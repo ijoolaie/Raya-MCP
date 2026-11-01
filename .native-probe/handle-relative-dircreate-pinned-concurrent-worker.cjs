@@ -1,0 +1,7 @@
+"use strict";
+const fs=require("node:fs");
+const addon=require("./build/Release/napi_probe_raya_phase1_dircreate_pinned.node");
+const root=process.argv[2];let parent=null,failure=null,baseline=null,opened=null,afterReady=null,completed=0;
+function wait(){const b=Buffer.alloc(128);let s="";while(!s.includes("\n")){const n=fs.readSync(0,b,0,b.length,null);if(!n)throw new Error("sync pipe closed");s+=b.subarray(0,n).toString("utf8");}return s.split(/\r?\n/,1)[0];}
+try{baseline=addon.processHandleCount();parent=addon.openParentRelative(root,"parent");opened=addon.processHandleCount();process.stdout.write("PINNED_CONCURRENT_READY\n");afterReady=addon.processHandleCount();if(wait()!=="STRESS")throw new Error("unexpected command");for(let i=0;i<200;i++){const n=String(i).padStart(3,"0");const r=addon.createDirectoryPathRelative(parent,"race-"+n+"\\nested\\leaf");if(!r.committed||r.createdCount!==3||r.existingCount!==0)throw new Error("unexpected result "+JSON.stringify(r));completed++;}process.stdout.write("PINNED_STRESS_DONE\n");if(wait()!=="RELEASE")throw new Error("unexpected release command");}catch(e){failure=e.stack||e.message;}finally{if(parent){try{addon.closeParentHandle(parent);}catch(e){failure=(failure?failure+"; ":"")+e.message;}}}
+const afterClose=addon.processHandleCount();console.log(JSON.stringify({ok:!failure,failure,baseline,opened,afterReady,completed,afterClose,closeFailures:addon.closeFailureCount()}));if(failure)process.exitCode=1;

@@ -1,0 +1,58 @@
+# Dependencies and generated output
+node_modules/
+build/
+dist/
+coverage/
+downloads/
+security-validation-*/
+.native-probe/build/
+.native-probe/node-gyp-cache/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+raya-config.json
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+
+# Runtime logs, diagnostics and local traces
+*.log
+*.log.*
+*.stderr
+*.stdout
+*.jsonl
+raya-cloudflare-current-url.txt
+
+# Backups and dated local experiments / captures
+*.bak
+*.before-*
+backup-*/
+stage[0-9]*-*/
+raya-tool-test-temp/
+.__tool_test__/
+iran-marketplace-probe*
+stage6-endpoints.txt
+
+# Compiled native artifacts
+*.obj
+*.lib
+*.exp
+*.exe
+*.dll
+*.node
+*.pdb
+*.ilk
+*.lastbuildstate
+*.tlog/
+
+# Archives and OS/editor files
+*.zip
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
