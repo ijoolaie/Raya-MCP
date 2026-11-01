@@ -1,9 +1,15 @@
 # Current Project Status — Raya Local MCP Bridge
 
-Last updated: 2026-10-31
+Last updated: 2026-11-01
 
 ## Mission
 Build a secure, reliable Windows local MCP bridge with practical Desktop Commander-like capabilities.
+
+## Repository and security status — 2026-11-01
+- Private GitHub repository: https://github.com/ijoolaie/Raya-MCP; default branch `main`; initial source push verified. See HANDOFF.md for the import manifest and exclusions.
+- Local baseline checks passed: `npm run lint`; `npm test` (42 core, 34 format/config, HTTP auth/initialize, 36 URL-security checks). The catalog/test inventory reports 45 tools; this does not mean every tool has independent acceptance coverage.
+- Dependabot alert #1 is open for moderate minimatch advisory GHSA-g3hv-75wg-m249 / CVE-2026-118764. Local `npm audit` reports 8 moderate transitive records, 0 high, 0 critical. No dependency fix has been applied; see `docs/DEPENDENCY-SECURITY-20261101.md`.
+- A local change in `.native-probe/hardlink-sharing-experiment.c` remains uncommitted and preserved; `to-iman-hand-off.md` is ignored and unpushed.
 
 ## Overall status
 <badge>Active development</badge> Phase 1 — filesystem confinement is the active phase. Production filesystem confinement is **NOT ACCEPTED as race-free**.

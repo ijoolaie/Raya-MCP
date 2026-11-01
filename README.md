@@ -2,11 +2,11 @@
 
 Windows-first MCP server for local development workspaces, exposed through stdio and an optional authenticated Streamable HTTP endpoint.
 
-## Current implementation status (2026-10-23)
+## Current implementation status (2026-11-01)
 - Core process/session, filesystem, search, configuration, diagnostics, URL retrieval, and PDF/DOCX/XLSX tools are implemented.
-- The bridge folder is not a Git repository; no commit/branch/PR exists.
+- GitHub repository: https://github.com/ijoolaie/Raya-MCP (Private), default branch `main`; local source was first committed and pushed on 2026-11-01. Preserve any uncommitted local changes.
 - PowerShell execution is gated by MCP_ENABLE_POWERSHELL=true and runs with the server user's Windows permissions. It is not a sandbox.
-- Local server verification: JSON-RPC `tools/list` returned 45 tools; `npm run check` passed; latest `npm test` passed (29 core assertions, 34 format/config checks, HTTP unauthenticated 401 and authenticated initialize 200).
+- Local server verification: JSON-RPC `tools/list` and the current test inventory report 45 tools; `npm run lint` passed (Node syntax checks); latest `npm test` passed (42 core checks, 34 format/config checks, HTTP unauthorized 401 and authenticated initialize 200, 36 URL-security checks). These tests do not individually acceptance-test every tool.
 - ChatGPT connector verification (2026-10-25): the connected catalog exposes 45 tools and live calls confirmed advanced filesystem, process, search, DOCX/XLSX/PDF, and URL tools are callable. This verifies availability and selected real operations, not exhaustive edge-case acceptance of every tool.
 
 ## Tool families

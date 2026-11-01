@@ -4,7 +4,7 @@ Mission: implement reliable Desktop Commander-like user outcomes. Follow HANDOFF
 
 1. Inspect source, tests, package scripts and live state before editing.
 2. Status labels: planned, implemented, tested, verified, not applicable. Never infer verification from code existence.
-3. Small reversible changes. Preserve backup. This directory is not a Git repository; don't invent commits or PRs.
+3. Small reversible changes. Preserve backups and all pre-existing working-tree changes. This directory is a Git repository; inspect status/diff before editing, never overwrite or discard uncommitted changes, and never invent commits or PRs.
 4. Scope changes to this directory unless authorized. Never change/stop the separate IranPriceScout tunnel on port 8765.
 5. Never print/log/commit API keys, tokens, cookies, or sensitive environment values.
 6. Shell/PowerShell is privileged and not sandboxed; cwd checks do not confine arbitrary commands.

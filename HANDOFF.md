@@ -1,5 +1,5 @@
 ﻿# Raya Local MCP Bridge â€” Handoff
-Updated: 2026-10-23
+Updated: 2026-11-01
 
 ## Goal
 Build a reliable local-computer/software-development MCP with capability coverage comparable to Desktop Commander MCP, without overstating implementation or weakening safety.
@@ -13,7 +13,7 @@ Build a reliable local-computer/software-development MCP with capability coverag
 - Profile: raya-local
 - Tunnel ID: tunnel_6adaf37ba87c819190a638ae8f1729f7
 - Backup: backup-before-powershell-20261023-120142
-- Not a Git repository; no commit/branch/PR exists for this bridge.
+- GitHub repository: https://github.com/ijoolaie/Raya-MCP (Private), default branch `main`; created and initially pushed on 2026-11-01. The bootstrap commit is `bf78a715ba16ed1d0e4a600af171f50aed628cbe`.
 - Do not touch the separate IranPriceScout tunnel on port 8765. HTTP mode also defaults to 8765; check conflicts before starting it.
 
 ## Configured roots
@@ -31,7 +31,7 @@ workspace_roots; workspace_list; file_read (UTF-8, 256 KiB); file_write (UTF-8, 
 - Live powershell_execute returned hostname DESKTOP-E4LST2S, PowerShell 5.1.26100.9711, cwd C:\Users\Ali\local-mcp-bridge, exit 0, no timeout, empty stderr.
 - Roots tool returned the five paths above.
 - Existing smoke test does not cover all tools, security cases, sessions, or parity.
-- A prior git status attempt failed: not a Git repository.
+- Historical baseline note (2026-10-23): the initial `git status` attempt failed because Git had not yet been initialized. This was superseded by the private GitHub repository bootstrap on 2026-11-01.
 
 ## Risks and rules
 PowerShell runs with the server user's Windows permissions; cwd validation is not a sandbox. Never print/store runtime API keys. Keep CONTROL_PLANE_API_KEY in the process environment, not YAML/docs/source. Preserve the backup. Do not touch the IranPriceScout tunnel or run destructive tests against user data.
@@ -65,7 +65,7 @@ Read AGENTS.md and docs/DESKTOP_COMMANDER_PARITY.md. Inspect current state and r
 ## Runtime diagnosis update (2026-10-23 16:25 +03:30)
 - Re-ran tunnel health with `--require-control-plane-poll`: healthz HTTP 200, readyz HTTP 200, control-plane poll `ok`, overall result `ok`.
 - Re-ran bridge checks: `npm run check` exit 0; `smoke-test.mjs` exit 0 (`toolCount: 6`, outside-root denial passed); `http-smoke-test.mjs` exit 0 (unauthenticated request blocked, authenticated initialize HTTP 200).
-- Live sequential calls through the connected MCP succeeded: `powershell_execute` returned `RAYA_MCP_LIVE_SMOKE_OK`, and `workspace_list` listed the bridge files. A `run_check(git_status)` call returned expected exit 128 because this bridge directory is not a Git repository.
+- Historical 2026-10-23 note: live sequential MCP calls succeeded, while `run_check(git_status)` returned exit 128 because Git had not yet been initialized. Superseded by the private GitHub repository bootstrap on 2026-11-01.
 - One `MCP server is not initialized` error occurred during a Promise.all call that invoked `file_read` and `workspace_roots` concurrently; immediate sequential retries succeeded. This is consistent with a transient client/connector initialization or concurrency race, but does not prove root cause. Until reproduced independently, invoke connected MCP tools sequentially rather than concurrently; do not restart the healthy tunnel to chase this error.
 - Tunnel `/api/logs?limit=100` showed recent dispatcher-forwarded commands and responses delivered to control plane. One generic `dispatcher delivered preserved MCP error response` event was seen; tunnel logs do not expose enough information to attribute it to a specific blocked request.
 - Interface discrepancy to investigate: local `server.mjs` also calls `registerAdvancedTools`, but the currently connected MCP interface advertises only six methods (`workspace_roots`, `workspace_list`, `file_read`, `file_write`, `run_check`, `powershell_execute`). Advanced tool availability through this connector is therefore not verified; do not claim those tools are callable from ChatGPT until the connector schema/registration is checked.
@@ -112,7 +112,7 @@ Do not restart it from a new shell unless the runtime key has been securely prov
 - Therefore local tool registration and ChatGPT-side tool exposure are currently out of sync. Editing `server.mjs` alone cannot prove or guarantee that the ChatGPT app/connector's declared tool catalog has changed.
 - The running tunnel process was confirmed alive (PID 193252, started 2026-10-23 17:04:20 local time). Existing tunnel log files end at 17:03:58 and are stale relative to that process; they are not evidence that the current tunnel session loaded all 45 tools.
 - No tunnel restart was performed, no credentials were read or printed, and the separate IranPriceScout tunnel was not touched.
-- **Next required fix:** inspect/update the ChatGPT-side Raya MCP app/connector tool declarations or registration mechanism, then verify the newly exposed tools from a fresh catalog and call at least one newly added tool end-to-end. This Windows project folder is not a Git repository, so these documentation changes are local only.
+- **Next required fix at that historical checkpoint:** inspect/update the ChatGPT-side Raya MCP app/connector tool declarations or registration mechanism, then verify the newly exposed tools from a fresh catalog and call at least one newly added tool end-to-end. The note that documentation changes were local-only was true before the private repository was created on 2026-11-01.
 
 ## Connector-level tool audit - 2026-10-23
 - Live connected catalog still exposes six tools only. The local MCP server exposes 45 through protocol-level `tools/list`.
@@ -211,7 +211,7 @@ Do not restart it from a new shell unless the runtime key has been securely prov
 
 ### Scope and safety
 - Investigation is limited to `C:\Users\Ali\local-mcp-bridge` and the separate Cloudflare Quick Tunnel diagnostic path. The original Raya MCP tunnel/client must remain running; do not stop or restart it without explicit authorization.
-- The local bridge directory is not a Git repository (`git rev-parse --show-toplevel` fails), and this bridge has no branch, remote, commit, or PR. These findings are therefore local hand-off notes only unless a canonical GitHub repository for this bridge is identified.
+- Historical checkpoint note (2026-10-23): the local bridge directory was not a Git repository and had no branch, remote, commit, or PR. Superseded on 2026-11-01 when the private repository https://github.com/ijoolaie/Raya-MCP was created.
 - Do not change DNS, system proxy, VPN, routing, or the unrelated IranPriceScout tunnel on port 8765 without explicit authorization. The user restored DNS after a temporary test; do not alter it again.
 
 ### Confirmed local state
@@ -615,7 +615,7 @@ Exact next action: add a synchronized leaf replacement/collision schedule and cl
 - Initial parallel diagnostics produced `MCP server is not initialized`. Sequential retries and subsequent individual calls succeeded. Continue using sequential local MCP calls; root cause of the concurrency/lifecycle error is not established.
 - `tunnel-client` was visible in the Windows process inventory (PID 58724), but public tunnel connectivity/health was not independently probed in this continuation. No tunnel restart was performed.
 - One pre-existing managed build session remains `running` with `timedOut:true` (PID 22608, `build-handle-relative.cmd`, started 2026-10-30 08:44:22Z). Its last output stopped during MSVC linking. It was not terminated because the prior handoff records a locked build artifact and explicitly requires preserving the uncertain process/artifact; do not start another build to the same output name or kill it without renewed identification/approval.
-- `local-mcp-bridge` is not a Git repository (`git_status` exit 128); there is no branch, commit, PR, or remote handoff for this workspace. Documentation and source changes are local files.
+- Historical 2026-10-30/31 checkpoint note: `local-mcp-bridge` was not yet a Git repository. Superseded by the private GitHub repository bootstrap on 2026-11-01; current branch is `main` with remote `origin`.
 
 ## Synchronized leaf-race acceptance expansion — 2026-10-30
 
@@ -1085,3 +1085,18 @@ Added `.native-probe/handle-relative-hardlink-alias-probe.cjs` as a standalone c
 Finding: path-relative traversal and reparse rejection do not by themselves prevent an in-root hard-link name from exposing the same file object that also has an outside-root name. This is not a demonstrated path traversal or reparse escape; it is a distinct aliasing boundary. Whether it is a security defect depends on the product's containment contract and who can create hard links in the workspace volume. If strict object-level confinement is required, a policy decision and mitigation are needed before acceptance. A simple `NumberOfLinks > 1` rejection is conservative but may reject legitimate in-root hard links; full hard-link-name enumeration/containment is more complex and provider-dependent. No mitigation was implemented in this step.
 
 Scope: one disposable NTFS characterization only; no Production source/handlers, runtime settings, ROOTS, dependencies, services, tunnels, or global permissions changed. The original recursive-create implementation remains NOT ACCEPTED due to its confirmed outside-root escape. The pinned prototype remains test-only / NOT ACCEPTED pending independent native review, an explicit hard-link policy, and broader filesystem/provider compatibility. Production remains NO-GO.
+
+## Private GitHub repository bootstrap and dependency alert — 2026-11-01
+
+Created the independent private GitHub repository https://github.com/ijoolaie/Raya-MCP under the authenticated `ijoolaie` account. Default branch is `main`; local remote is `origin`. The initial import commit is `bf78a715ba16ed1d0e4a600af171f50aed628cbe` (101 files, 20,668 insertions). The initial remote branch SHA was independently checked against local HEAD after push.
+
+The first reviewed import included the server/tool source, package manifests and lockfile, smoke/security tests, AGENTS/README/HANDOFF, roadmap/status/parity/design documents, agent instructions, and text/source artifacts for isolated native probes. The reviewed `.gitignore` excludes environment files, `raya-config.json`, logs/traces, backups, node_modules, downloads/tunnel binaries, build outputs, compiled native artifacts, duplicate security-validation copies, dated marketplace probe captures, and `to-iman-hand-off.md`. No excluded local files were deleted. A heuristic scan of 101 candidate text/source files found no recognized private-key, GitHub/OpenAI/AWS token, JWT, Cloudflare-key, or high-entropy secret-assignment patterns; this is not a guarantee that no secret exists.
+
+Local verification before dependency remediation: `npm run lint` passed; `npm test` passed (42 core checks, 34 format/config checks, HTTP unauthorized/authenticated initialize, 36 URL-security checks). The test inventory reports 45 tools. Representative connected MCP calls succeeded, but not all 45 tools have been individually acceptance-tested.
+
+After the first push, GitHub Dependabot opened alert #1 for GHSA-g3hv-75wg-m249 / CVE-2026-118764, a moderate minimatch globparts-amplification denial-of-service advisory. Local `npm ls minimatch glob archiver exceljs --all` found minimatch 3.1.5 and 5.1.9 below ExcelJS 4.4.0 / archiver 5.3.2. `npm audit --json` reports eight moderate transitive package records in the same dependency chain, zero high and zero critical. The advisory's patched minimatch version is 11.0.1. `npm audit fix --dry-run` proposed a semver-major ExcelJS downgrade to 4.1.1; this was not applied. No dependency or lockfile changes were made. Reachability from Raya's XLSX operations has not been established. See `docs/DEPENDENCY-SECURITY-20261101.md`; keep Dependabot alert #1 open until a compatible fix or justified mitigation is verified.
+
+A later status check found a local uncommitted modification in `.native-probe/hardlink-sharing-experiment.c`; its diff was inspected and preserved, not staged or pushed. `to-iman-hand-off.md` remains ignored and local-only. Do not overwrite or discard either local artifact without review.
+
+Phase 1 filesystem confinement remains IN PROGRESS / NOT ACCEPTED. The native HANDLE-relative work remains isolated test/probe code and is not integrated into Production handlers. Production filesystem confinement is not established as race-free; Production integration remains NO-GO.
+
