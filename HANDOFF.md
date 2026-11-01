@@ -1134,5 +1134,18 @@ Native compilation succeeded with Visual Studio 2026 Build Tools. The standalone
 This is promising test-only evidence, not a complete race-free proof. It conservatively rejects legitimate hard links even when all names are inside the workspace; it does not enumerate all link names; only local NTFS was tested; other providers remain untested; and other adapters/operation families still need review. The experimental guard is not integrated into the existing pinned prototype or Production. See `.native-probe/hardlink-alias-policy.md`.
 
 Repository status at this checkpoint: dependency remediation PR https://github.com/ijoolaie/Raya-MCP/pull/1 remains open and unmerged; Windows/Node 22 CI passed on head `7bc27f044da177a91a75f07d3e4e4263490d5ef7`; Dependabot alert #1 remains open until the default branch is updated. Do not mix the local hard-link experiment into the dependency PR.
+## Live NTFS DACL permission-denied acceptance — 2026-11-01
+
+Added `.native-probe/handle-relative-acl-denial-test.cjs` and `.native-probe/acl-denial-acceptance.md`. The standalone test uses the current process SID to apply explicit deny ACEs only to a disposable NTFS fixture: deny file-add/subdirectory-add on a temporary parent (`WD,AD`) and deny read-data on a temporary file (`RD`). It then opens the parent through the existing isolated pinned native addon and exercises real operations under the active DACL.
+
+Latest run exited 0 and verified:
+- `createChildExclusive` failed with `NTSTATUS 0xC0000022` (STATUS_ACCESS_DENIED).
+- `createDirectoryChildExclusive` failed with `NTSTATUS 0xC0000022`.
+- `readChildFromParent` failed with `NTSTATUS 0xC0000022`.
+- After removing only the explicit deny ACEs from the disposable file/directory, read, file create and directory create succeeded.
+- Native process HANDLE count returned to baseline and the disposable fixture was removed.
+
+No global/user-profile ACL, configured ROOTS, Production handler, service, tunnel or runtime setting was changed. This is live DACL evidence for these three isolated operations on the current NTFS host only; other providers, token configurations and remaining operation families are still untested. This closes one specific Phase 1 acceptance item, not the whole Phase 1 gate. Production remains NO-GO.
+
 
 

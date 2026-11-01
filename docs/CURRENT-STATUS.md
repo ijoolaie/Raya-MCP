@@ -10,6 +10,7 @@ Build a secure, reliable Windows local MCP bridge with practical Desktop Command
 - Local baseline checks passed: `npm run lint`; `npm test` (42 core, 34 format/config, HTTP auth/initialize, 36 URL-security checks). The catalog/test inventory reports 45 tools; this does not mean every tool has independent acceptance coverage.
 - Dependabot alert #1 for GHSA-g3hv-75wg-m249 / CVE-2026-118764 has a remediation candidate on `security/minimatch-remediation`: Archiver 8.0.0, Unzipper 0.12.5, minimatch 11.0.1. Local and clean-clone `npm audit` report 0 vulnerabilities; full lint/test and XLSX round-trip pass. [PR #1](https://github.com/ijoolaie/Raya-MCP/pull/1) is open; Windows/Node 22 GitHub Actions passed on the current code head. The default-branch Dependabot alert remains open until merge and re-verification; see `docs/DEPENDENCY-SECURITY-20261101.md`.
 - A local change in `.native-probe/hardlink-sharing-experiment.c` remains uncommitted and preserved; `to-iman-hand-off.md` is ignored and unpushed. A separate hard-link guard prototype/test is also local and test-only; it does not modify the pinned prototype or Production handlers. It rejects multi-link reads and blocks rename/unlink while the read HANDLE is held on the tested NTFS host, but is not accepted as race-free or portable. See `.native-probe/hardlink-alias-policy.md`.
+- Live DACL denial was verified on the current NTFS host for `createChildExclusive`, `createDirectoryChildExclusive`, and `readChildFromParent`; each returned `STATUS_ACCESS_DENIED`, then succeeded after only the temporary fixture's deny ACEs were removed. No global/user-profile ACLs were changed. See `.native-probe/acl-denial-acceptance.md`.
 
 ## Overall status
 <badge>Active development</badge> Phase 1 — filesystem confinement is the active phase. Production filesystem confinement is **NOT ACCEPTED as race-free**.
@@ -18,7 +19,7 @@ Build a secure, reliable Windows local MCP bridge with practical Desktop Command
 | Phase | Status | Notes |
 |---|---|---|
 | 0 — Baseline and architecture | Implemented; ongoing | Workspace, tool families, threat/acceptance gaps and phase policy documented |
-| 1 — Filesystem confinement | In progress / Not accepted | Held-parent read, exclusive zero-byte create, identity readback, finalizer, close-fault and selected cleanup tests pass in isolated prototype; parent/leaf race and operation-family gates remain |
+| 1 — Filesystem confinement | In progress / Not accepted | Held-parent read, exclusive zero-byte create, identity readback, finalizer, close-fault and selected cleanup tests pass in isolated prototype; live DACL denial now passes for read/file-create/directory-create on current NTFS; hard-link alias policy and broader operation-family/provider gates remain |
 | 2 — Safe filesystem operations | Planned | Depends on accepted filesystem primitives and operation-family semantics |
 | 3 — Process lifecycle | Planned | Includes safe launch, output, timeout, cancellation and termination |
 | 4 — Developer/workspace capabilities | Planned | Project, Git, test and diagnostic workflows |

@@ -275,4 +275,11 @@ The separate experimental addon compiled successfully and the standalone test ex
 This remains experimental, not a complete race-free proof or a portable policy. It rejects legitimate hard links even if all names are inside the workspace, does not enumerate all link names, and has only been tested on the current NTFS volume. Other read/metadata adapters and filesystem providers still need review. Do not integrate into Production yet.
 
 Next: decide and document whether Raya's containment contract is path-based or strict single-link object-level; then expand the native acceptance matrix to remaining read/metadata adapters and provider/ACL cases. Keep Phase 1 IN PROGRESS / NOT ACCEPTED and Production NO-GO until the full acceptance gate, including live ACL permission-denied evidence, passes.
+## Live DACL permission-denied acceptance — 2026-11-01
+
+Added `.native-probe/handle-relative-acl-denial-test.cjs` and `.native-probe/acl-denial-acceptance.md`. On a disposable local NTFS fixture, the harness applied explicit deny ACEs to the current process SID for file-add/subdirectory-add on a temporary parent and read-data on one temporary file. The existing isolated native addon then produced `STATUS_ACCESS_DENIED` (`0xC0000022`) for `createChildExclusive`, `createDirectoryChildExclusive`, and `readChildFromParent`. After removing only those explicit deny ACEs, all three operations succeeded; native HANDLE count returned to baseline and the fixture was removed.
+
+This is live DACL evidence, not a mocked error. No global/user-profile ACLs or Production handlers were changed. It closes the DACL-denial check for these three isolated operations on the current NTFS host only. ReFS, SMB/network, removable/cloud providers, other token configurations and remaining operation families are not covered.
+
+Updated next action: continue remaining read/metadata and mutation operation-family acceptance, complete hard-link alias policy review, and broaden provider/ACL coverage. Phase 1 remains IN PROGRESS / NOT ACCEPTED; Production remains NO-GO until the complete acceptance gate is met.
 
