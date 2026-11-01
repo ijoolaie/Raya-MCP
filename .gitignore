@@ -37,6 +37,7 @@ raya-tool-test-temp/
 .__tool_test__/
 iran-marketplace-probe*
 stage6-endpoints.txt
+to-iman-hand-off.md
 
 # Compiled native artifacts
 *.obj
