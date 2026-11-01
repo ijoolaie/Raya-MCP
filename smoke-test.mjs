@@ -1,11 +1,11 @@
 ﻿import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StdioClientTransport, getDefaultEnvironment } from "@modelcontextprotocol/sdk/client/stdio.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 const here=path.dirname(fileURLToPath(import.meta.url));
-const transport=new StdioClientTransport({command:process.execPath,args:[path.join(here,"server.mjs")]});
+const transport=new StdioClientTransport({command:process.execPath,args:[path.join(here,"server.mjs")],env:{...getDefaultEnvironment(),MCP_ALLOWED_ROOTS:process.env.MCP_ALLOWED_ROOTS||here}});
 const client=new Client({name:"local-mcp-bridge-smoke-test",version:"0.2.0"});
 const dir=path.join(here,".mcp-smoke-"+process.pid);
 const outsideDir=await fs.mkdtemp(path.join(os.tmpdir(),"raya-outside-"));
