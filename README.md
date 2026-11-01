@@ -55,6 +55,9 @@ The stdio tunnel launcher is start-mcp-stdio.cmd. Keep CONTROL_PLANE_API_KEY in 
 - `run_check(npm_lint)` encountered intermittent connector `MCP server is not initialized` errors in the latest session, so direct `npm run lint` is the current passing evidence for lint/check.
 - Loopback `/health/mcp` shows successful initialize and a running child, but `tools_list.ok=false` / `retained_count=0`. This records whether the tunnel observed forwarded `tools/list` traffic; it does not contradict the visible 45-tool catalog and successful calls. Do not restart the healthy tunnel just to force this observation field green.
 
+## Dependency security review (2026-11-01)
+A newly published moderate Dependabot advisory affects transitive `minimatch` instances in the ExcelJS/archiver dependency tree. It is not yet remediated; see [docs/DEPENDENCY-SECURITY-20261101.md](docs/DEPENDENCY-SECURITY-20261101.md). The earlier 2026-10-26 `npm audit` result is historical, not the current dependency status.
+
 ## References
 - Desktop Commander MCP: https://github.com/wonderwhy-er/DesktopCommanderMCP
 - Docs: https://desktopcommander.app/mcp/
