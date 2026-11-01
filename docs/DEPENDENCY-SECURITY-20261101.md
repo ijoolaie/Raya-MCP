@@ -2,7 +2,7 @@
 
 ## Status
 
-**Candidate remediation implemented and locally verified on branch `security/minimatch-11-override`; not yet merged.** Keep GitHub Dependabot alert #1 open until the change is merged and the default-branch alert is confirmed resolved.
+**Candidate remediation implemented and locally verified on branch `security/minimatch-remediation`; not yet merged.** Keep GitHub Dependabot alert #1 open until the change is merged and the default-branch alert is confirmed resolved.
 
 - Repository alert: https://github.com/ijoolaie/Raya-MCP/security/dependabot/1
 - Advisory: https://github.com/advisories/GHSA-g3hv-75wg-m249
@@ -62,6 +62,7 @@ Environment: Windows, Node.js v22.23.2, npm 10.9.8.
 - XLSX round-trip smoke: created a workbook, wrote a 6,440-byte XLSX buffer, reopened it, and verified cell B2 equals numeric value 42.
 - `npm run lint`: passed (the project's Node syntax-check chain).
 - `npm test`: passed: 42 core checks, 34 format/config checks (including XLSX write/read/range/search/formula paths), HTTP unauthorized/authenticated-initialize checks, and 36 URL-security checks.
+- Clean-checkout verification: cloned the committed remediation branch into an ignored disposable directory, ran `npm ci --ignore-scripts` (205 packages installed; 206 audited), then `npm audit`, `npm run lint`, and `npm test`; all completed with exit 0 and 0 vulnerabilities.
 - No Production application source or native filesystem handlers were changed.
 
 ## Remaining acceptance gates

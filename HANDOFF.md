@@ -1102,7 +1102,7 @@ Phase 1 filesystem confinement remains IN PROGRESS / NOT ACCEPTED. The native HA
 
 ## minimatch dependency remediation candidate — 2026-11-01
 
-Worked on an isolated branch `security/minimatch-11-override`; the existing uncommitted change in `.native-probe/hardlink-sharing-experiment.c` was preserved and not staged.
+Worked on an isolated branch `security/minimatch-remediation`; the existing uncommitted change in `.native-probe/hardlink-sharing-experiment.c` was preserved and not staged.
 
 A simple global `minimatch@11.0.1` override alone was rejected after an executable `glob@7` sync smoke test failed due to changed Minimatch internal structure. The tested candidate therefore upgrades the legacy transitive consumers together: `archiver@8.0.0`, `unzipper@0.12.5`, and `minimatch@11.0.1`; the existing `uuid@11.1.1` override remains. This removes the old `glob@7` / `rimraf@2` path from the ExcelJS dependency tree.
 
@@ -1113,6 +1113,7 @@ Candidate local evidence on Windows / Node 22.23.2 / npm 10.9.8:
 - XLSX round-trip smoke passed: create workbook, write buffer, reopen, read B2=42.
 - `npm run lint` passed.
 - `npm test` passed: 42 core, 34 format/config (including XLSX write/read/range/search/formula), HTTP auth/initialize, 36 URL-security checks.
+- Clean committed-branch clone verification passed: `npm ci --ignore-scripts` installed 205 packages / audited 206; `npm audit` reported 0 vulnerabilities; `npm run lint` and `npm test` both exited 0.
 - No application handler or native Production source was changed.
 
 The candidate is not merged yet. Keep Dependabot alert #1 open until the PR is merged and GitHub confirms the default-branch alert has resolved. See `docs/DEPENDENCY-SECURITY-20261101.md`. A clean-checkout install/CI confirmation remains a merge gate.
