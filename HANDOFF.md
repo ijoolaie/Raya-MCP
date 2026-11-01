@@ -1100,3 +1100,22 @@ A later status check found a local uncommitted modification in `.native-probe/ha
 
 Phase 1 filesystem confinement remains IN PROGRESS / NOT ACCEPTED. The native HANDLE-relative work remains isolated test/probe code and is not integrated into Production handlers. Production filesystem confinement is not established as race-free; Production integration remains NO-GO.
 
+## minimatch dependency remediation candidate — 2026-11-01
+
+Worked on an isolated branch `security/minimatch-11-override`; the existing uncommitted change in `.native-probe/hardlink-sharing-experiment.c` was preserved and not staged.
+
+A simple global `minimatch@11.0.1` override alone was rejected after an executable `glob@7` sync smoke test failed due to changed Minimatch internal structure. The tested candidate therefore upgrades the legacy transitive consumers together: `archiver@8.0.0`, `unzipper@0.12.5`, and `minimatch@11.0.1`; the existing `uuid@11.1.1` override remains. This removes the old `glob@7` / `rimraf@2` path from the ExcelJS dependency tree.
+
+Candidate local evidence on Windows / Node 22.23.2 / npm 10.9.8:
+- `npm install --ignore-scripts` succeeded and updated package-lock.
+- `npm ls minimatch glob archiver archiver-utils readdir-glob unzipper rimraf --all` shows ExcelJS 4.4.0 -> Archiver 8.0.0 -> readdir-glob 3.0.0 -> minimatch 11.0.1, plus Unzipper 0.12.5; no old glob7/rimraf2 path appears in this tree.
+- `npm audit` reports 0 vulnerabilities.
+- XLSX round-trip smoke passed: create workbook, write buffer, reopen, read B2=42.
+- `npm run lint` passed.
+- `npm test` passed: 42 core, 34 format/config (including XLSX write/read/range/search/formula), HTTP auth/initialize, 36 URL-security checks.
+- No application handler or native Production source was changed.
+
+The candidate is not merged yet. Keep Dependabot alert #1 open until the PR is merged and GitHub confirms the default-branch alert has resolved. See `docs/DEPENDENCY-SECURITY-20261101.md`. A clean-checkout install/CI confirmation remains a merge gate.
+
+The earlier dependency alert does not change the filesystem-security assessment: Phase 1 remains IN PROGRESS / NOT ACCEPTED; native filesystem prototypes remain test-only; Production integration remains NO-GO pending the separate filesystem acceptance gates.
+

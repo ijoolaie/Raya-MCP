@@ -8,7 +8,7 @@ Build a secure, reliable Windows local MCP bridge with practical Desktop Command
 ## Repository and security status — 2026-11-01
 - Private GitHub repository: https://github.com/ijoolaie/Raya-MCP; default branch `main`; initial source push verified. See HANDOFF.md for the import manifest and exclusions.
 - Local baseline checks passed: `npm run lint`; `npm test` (42 core, 34 format/config, HTTP auth/initialize, 36 URL-security checks). The catalog/test inventory reports 45 tools; this does not mean every tool has independent acceptance coverage.
-- Dependabot alert #1 is open for moderate minimatch advisory GHSA-g3hv-75wg-m249 / CVE-2026-118764. Local `npm audit` reports 8 moderate transitive records, 0 high, 0 critical. No dependency fix has been applied; see `docs/DEPENDENCY-SECURITY-20261101.md`.
+- Dependabot alert #1 for GHSA-g3hv-75wg-m249 / CVE-2026-118764 has a locally verified remediation candidate on `security/minimatch-11-override`: Archiver 8.0.0, Unzipper 0.12.5, minimatch 11.0.1. Local `npm audit` now reports 0 vulnerabilities; full lint/test and XLSX round-trip pass. PR/merge and default-branch alert resolution remain pending; see `docs/DEPENDENCY-SECURITY-20261101.md`.
 - A local change in `.native-probe/hardlink-sharing-experiment.c` remains uncommitted and preserved; `to-iman-hand-off.md` is ignored and unpushed.
 
 ## Overall status

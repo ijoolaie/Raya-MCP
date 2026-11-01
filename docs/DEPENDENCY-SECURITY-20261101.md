@@ -2,7 +2,7 @@
 
 ## Status
 
-**Open / not remediated.** GitHub Dependabot created alert #1 after the initial repository push. It is a moderate-severity transitive npm dependency advisory. Do not treat the earlier 2026-10-26 zero-vulnerability audit recorded in README as current evidence.
+**Candidate remediation implemented and locally verified on branch `security/minimatch-11-override`; not yet merged.** Keep GitHub Dependabot alert #1 open until the change is merged and the default-branch alert is confirmed resolved.
 
 - Repository alert: https://github.com/ijoolaie/Raya-MCP/security/dependabot/1
 - Advisory: https://github.com/advisories/GHSA-g3hv-75wg-m249
@@ -11,11 +11,9 @@
 - Patched version: `11.0.1`
 - Impact: potential CPU/memory denial of service through globparts amplification when attacker-controlled glob patterns are processed under the affected optimization path.
 
-## Local evidence
+## Initial dependency path
 
-Environment: Windows, Node.js v22.23.2, npm; project directory `C:\Users\Ali\local-mcp-bridge`.
-
-`npm ls minimatch glob archiver exceljs --all` returned this dependency tree:
+Before remediation, `npm ls minimatch glob archiver exceljs --all` showed:
 
 ```text
 exceljs@4.4.0
@@ -30,22 +28,50 @@ exceljs@4.4.0
             └── glob@7.2.3
 ```
 
-- `npm audit --json`: 8 moderate vulnerable package records, 0 high, 0 critical. The records are in the same transitive chain (archiver, archiver-utils, exceljs, glob, minimatch, readdir-glob, rimraf and zip-stream).
-- GitHub Dependabot groups the minimatch advisory as one open alert.
-- `npm audit fix --dry-run --json` did not produce a compatible update. npm proposed a semver-major downgrade of ExcelJS to 4.1.1; this was not applied.
-- No dependency, lockfile, or application source was modified during this review.
-- The vulnerable pattern-processing path's reachability from Raya's actual XLSX workflows has not been established. Do not claim either confirmed exploitability or confirmed non-exploitability.
+`npm audit` reported eight moderate transitive package records in this dependency chain, zero high and zero critical.
 
-## Required remediation
+## Remediation selected
 
-1. Inspect upstream release compatibility for `exceljs`, `archiver`, `archiver-utils`, `glob`, and `readdir-glob`.
-2. Test any candidate override or dependency upgrade in an isolated copy first. Avoid blindly forcing minimatch 11 into consumers that declare older major-version ranges.
-3. Preserve supported XLSX behavior: workbook create/read, bounded range read, workbook search, cell write, and formula write.
-4. Run the full `npm run lint` and `npm test` suites, plus `npm audit`, after a candidate change.
-5. Keep Dependabot alert #1 open until the affected dependency instances are upgraded or a documented, technically justified mitigation is accepted.
+A global minimatch-only override to 11.0.1 produced `npm audit: 0 vulnerabilities`, but it was rejected: an executable `glob@7` sync smoke test failed because that old major version depends on the legacy Minimatch internal structure. The failed experiment was not retained as the final solution.
 
-## Baseline before remediation
+The working candidate upgrades the legacy transitive consumers alongside minimatch:
 
-- `npm run lint`: passed.
-- `npm test`: passed (42 core checks, 34 format/config checks, HTTP unauthorized/authenticated initialize, 36 URL-security checks).
-- These test results predate any dependency remediation; no remediation has been applied yet.
+- `archiver` overridden from 5.3.2 to 8.0.0.
+- `unzipper` overridden from 0.10.14 to 0.12.5.
+- `minimatch` overridden to patched 11.0.1.
+- Existing `uuid` override 11.1.1 retained.
+
+This removes the old `glob@7` / `rimraf@2` dependency path from the installed ExcelJS tree. The resulting dependency tree is:
+
+```text
+local-mcp-bridge
+└── exceljs@4.4.0
+    ├── archiver@8.0.0 (overridden)
+    │   └── readdir-glob@3.0.0
+    │       └── minimatch@11.0.1 (overridden)
+    └── unzipper@0.12.5 (overridden)
+```
+
+## Local verification
+
+Environment: Windows, Node.js v22.23.2, npm 10.9.8.
+
+- `npm install --ignore-scripts`: completed successfully and updated the lockfile.
+- `npm ls minimatch glob archiver archiver-utils readdir-glob unzipper rimraf --all`: shows only the upgraded Archiver 8 / readdir-glob 3 / minimatch 11 / Unzipper 0.12.5 path for ExcelJS.
+- `npm audit`: **0 vulnerabilities**.
+- XLSX round-trip smoke: created a workbook, wrote a 6,440-byte XLSX buffer, reopened it, and verified cell B2 equals numeric value 42.
+- `npm run lint`: passed (the project's Node syntax-check chain).
+- `npm test`: passed: 42 core checks, 34 format/config checks (including XLSX write/read/range/search/formula paths), HTTP unauthorized/authenticated-initialize checks, and 36 URL-security checks.
+- No Production application source or native filesystem handlers were changed.
+
+## Remaining acceptance gates
+
+1. Review the PR diff and run a clean-lockfile installation in CI or an isolated clean checkout before merge.
+2. Verify Dependabot alert #1 is resolved on the default branch after merge; do not dismiss it manually as a substitute for remediation.
+3. Keep this advisory documented in release notes/handoff until GitHub confirms the alert is closed.
+
+## Important scope
+
+This is a dependency-chain remediation. It does not establish whether the vulnerable glob pattern path was reachable from untrusted user-controlled input in the previous ExcelJS workflow; that reachability was not proven. The remediation removes the affected versions from the installed tree rather than relying on an unverified exploitability claim.
+
+The local uncommitted change in `.native-probe/hardlink-sharing-experiment.c` is unrelated and intentionally preserved outside this dependency PR.

@@ -56,7 +56,7 @@ The stdio tunnel launcher is start-mcp-stdio.cmd. Keep CONTROL_PLANE_API_KEY in 
 - Loopback `/health/mcp` shows successful initialize and a running child, but `tools_list.ok=false` / `retained_count=0`. This records whether the tunnel observed forwarded `tools/list` traffic; it does not contradict the visible 45-tool catalog and successful calls. Do not restart the healthy tunnel just to force this observation field green.
 
 ## Dependency security review (2026-11-01)
-A newly published moderate Dependabot advisory affects transitive `minimatch` instances in the ExcelJS/archiver dependency tree. It is not yet remediated; see [docs/DEPENDENCY-SECURITY-20261101.md](docs/DEPENDENCY-SECURITY-20261101.md). The earlier 2026-10-26 `npm audit` result is historical, not the current dependency status.
+A moderate Dependabot advisory for transitive `minimatch` has a candidate remediation on branch `security/minimatch-11-override`: Archiver 8.0.0, Unzipper 0.12.5, and minimatch 11.0.1 overrides. Local `npm audit` reports 0 vulnerabilities; the XLSX round-trip smoke, `npm run lint`, and full `npm test` passed after the dependency change. The change is not merged yet; keep Dependabot alert #1 open until the default branch is verified. Details: [docs/DEPENDENCY-SECURITY-20261101.md](docs/DEPENDENCY-SECURITY-20261101.md).
 
 ## References
 - Desktop Commander MCP: https://github.com/wonderwhy-er/DesktopCommanderMCP
