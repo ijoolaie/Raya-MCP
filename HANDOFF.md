@@ -1120,3 +1120,19 @@ The candidate is not merged yet. Keep Dependabot alert #1 open until the PR is m
 
 The earlier dependency alert does not change the filesystem-security assessment: Phase 1 remains IN PROGRESS / NOT ACCEPTED; native filesystem prototypes remain test-only; Production integration remains NO-GO pending the separate filesystem acceptance gates.
 
+## Hard-link alias guard experiment — 2026-11-01
+
+After the original NTFS alias probe showed that a file outside the root could be hard-linked inside and then read through the inside name, created a separate experimental copy of the pinned native addon. Files: `.native-probe/handle-relative-hardlink-guard.c`, `.native-probe/build-raya-phase1-hardlink-guard.cmd`, `.native-probe/handle-relative-hardlink-guard-test.cjs`, and `.native-probe/hardlink-alias-policy.md`. The existing pinned addon/source and the user's pre-existing `.native-probe/hardlink-sharing-experiment.c` were not modified.
+
+The candidate guard applies to the experimental `readChildFromParent`, `inspectChildFromParent`, and `openRelative` functions:
+- Query `FILE_STANDARD_INFO.NumberOfLinks` and reject regular files unless the count is exactly 1.
+- Open the file with `FILE_SHARE_READ` only, preventing write/delete/rename while the child HANDLE is held on the tested NTFS host.
+- The bounded read harness injects a synchronization callback after opening the child HANDLE and before the link-count check.
+
+Native compilation succeeded with Visual Studio 2026 Build Tools. The standalone NTFS test exited 0 and verified: normal single-link reads/identity inspection pass; pre-existing multi-link files and outside-backed hardlink aliases are rejected by read/inspect/openRelative; a new hardlink can still be created to an already in-root file while the HANDLE is held, and the pre-read link-count check detects the increase and rejects before returning bytes; attempts to rename the in-root name outside or unlink it while the HANDLE is held fail with EBUSY; after HANDLE close the disposable link can be created; HANDLE count returns to baseline.
+
+This is promising test-only evidence, not a complete race-free proof. It conservatively rejects legitimate hard links even when all names are inside the workspace; it does not enumerate all link names; only local NTFS was tested; other providers remain untested; and other adapters/operation families still need review. The experimental guard is not integrated into the existing pinned prototype or Production. See `.native-probe/hardlink-alias-policy.md`.
+
+Repository status at this checkpoint: dependency remediation PR https://github.com/ijoolaie/Raya-MCP/pull/1 remains open and unmerged; Windows/Node 22 CI passed on head `7bc27f044da177a91a75f07d3e4e4263490d5ef7`; Dependabot alert #1 remains open until the default branch is updated. Do not mix the local hard-link experiment into the dependency PR.
+
+

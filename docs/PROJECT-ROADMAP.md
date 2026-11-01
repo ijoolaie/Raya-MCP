@@ -260,3 +260,19 @@ Fresh verification after adding the stress harness: `npm run test:native-publish
 The identity-conditional replacement decision above remains unchanged: existing-file atomic edit is unsupported / fail closed. The publish stress proves atomic create-if-absent contention only, not replacement. Phase 1 remains IN PROGRESS / NOT ACCEPTED; Production remains NO-GO; live ACL permission-denied acceptance remains open.
 
 Next: continue the remaining operation-family acceptance work with the same test-only discipline. Keep existing-file atomic edit unsupported unless a filesystem/provider-specific identity-conditional transaction or a separately approved weaker cooperative/in-place contract is proven; do not weaken the threat model. The Windows rename API exposes replace/no-replace and POSIX replacement semantics, but no expected-target-FileId compare-and-swap contract; do not implement existing-file atomic edit until that gap is resolved. A separate test-only atomic create-if-absent publish primitive is now implemented and verified (9 checks). The publish test, existing rename stress (5 rounds / 20 workers / 120 assertions), npm run lint, and npm test all exited 0. See .native-probe/mutation-adapter-contract.md. This primitive does not replace existing files; no Production handlers, native source, ROOTS, runtime settings, services, tunnels, or permissions were changed.
+## Hard-link alias policy characterization — 2026-11-01
+
+The earlier NTFS probe demonstrated that a hard link to an outside file could be placed inside the workspace and read through the inside alias. This is a separate aliasing boundary from symlink/junction traversal.
+
+A new isolated addon copy and harness were built under `.native-probe` (see `hardlink-alias-policy.md`). On the current NTFS host, the candidate policy rejects files whose `FILE_STANDARD_INFO.NumberOfLinks` is not exactly 1 and opens child read handles with `FILE_SHARE_READ` only. The synchronized test verifies that:
+- existing outside-backed or multi-link aliases are rejected by read, identity inspection and `openRelative`;
+- rename and unlink of the in-root name are blocked while the child HANDLE is open (Node reports `EBUSY`);
+- a new hard link can still be added to an already in-root file while the HANDLE is held, but the pre-read link-count check detects the increase and rejects before returning bytes;
+- single-link reads still work and all HANDLE counts return to baseline.
+
+The separate experimental addon compiled successfully and the standalone test exited 0. No existing pinned prototype source, Production handler, ROOTS, runtime settings, or permissions were changed. The user's pre-existing `.native-probe/hardlink-sharing-experiment.c` remains untouched.
+
+This remains experimental, not a complete race-free proof or a portable policy. It rejects legitimate hard links even if all names are inside the workspace, does not enumerate all link names, and has only been tested on the current NTFS volume. Other read/metadata adapters and filesystem providers still need review. Do not integrate into Production yet.
+
+Next: decide and document whether Raya's containment contract is path-based or strict single-link object-level; then expand the native acceptance matrix to remaining read/metadata adapters and provider/ACL cases. Keep Phase 1 IN PROGRESS / NOT ACCEPTED and Production NO-GO until the full acceptance gate, including live ACL permission-denied evidence, passes.
+
