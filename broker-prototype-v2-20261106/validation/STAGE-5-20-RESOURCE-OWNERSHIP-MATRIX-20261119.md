@@ -69,3 +69,43 @@ Documentation-only source review. No source/header/API/test/build/lifecycle/owne
 - Gate E: BLOCKED; positive recovery actions/tests remain unauthorized and unsupported.
 - Gate F: remains subject to remaining acceptance evidence and PR review; not passed by this document.
 - Stage 5.20: INCOMPLETE. Stage 5 / Phase 1: NOT ACCEPTED. Production: NO-GO.
+
+## Production-v1 field coverage versus the per-record effect ledger
+
+This subsection resolves the next bounded question by comparing the actual public production record layouts with the underlying in-memory state and the test-only diagnostic surface. “Available internally” below means process-local mutable state observed by source inspection; it is not a durable, authenticated, immutable audit record.
+
+| Effect / evidence item | Production Adapter v1 | Production Worker v1 | Other current source surface | Ledger conclusion |
+|---|---|---|---|---|
+| Stable per-process Adapter identity and operation ID | PRESENT (`adapter_instance_id`, `adapter_operation_id`) | PRESENT only for Adapter-associated records (`adapter_identity_valid` and pair) | Adapter counters are process-local | Correlation identity exists; it is not durable across restart. |
+| Worker identity / operation identity | NOT PRESENT | PRESENT (`identity_valid`, `worker_epoch`, `worker_operation_id`) | Worker operation fields are mutable in-memory state | Worker correlation exists only in Worker v1. |
+| First retain cause and stage | PRESENT | PRESENT | Retained nodes hold first-retain values | Classification evidence exists; it is not a complete effect history. |
+| Submitter request ID and request state | NOT PRESENT | NOT PRESENT | `raya_submitter_request` has `request_id` and `state`; Submitter snapshot exposes only aggregate lifecycle/counts | Per-request state is not exposed by either Production retained inventory. |
+| Issue and Publish effect state | NOT PRESENT | NOT PRESENT | Request has `issue_effect` and `publish_effect`; Submitter keeps first degraded request/effect diagnostics; Adapter test-only snapshot copies effects | Internal per-request states exist, but are absent from Production v1 and are not a durable receipt. |
+| OS completion observation / transferred bytes / completion error | NOT PRESENT | NOT PRESENT | Worker operation has `transferred`, `completion_error`, collection state and retry observations; Adapter test-only snapshot copies selected completion values | Current Production v1 does not expose completion evidence. |
+| Per-handle close disposition (issuing pipe vs completion event) | NOT PRESENT | NOT PRESENT | Finalizer has aggregate state, attempts and successful-close count; it stores both handles internally; Adapter test-only snapshot copies aggregate counters | No per-handle result/effect record in Production v1. Aggregate successful-close count cannot identify which handle's close committed. |
+| Finalizer release commit | NOT PRESENT | NOT PRESENT | `raya_pipe_finalizer.release_commits`; Adapter test-only snapshot copies it | Internal state exists; not part of Production v1. |
+| Owner state / release commit | NOT PRESENT | NOT PRESENT | `raya_pipe_owner.state` and `release_commits`; Adapter test-only snapshot copies these | Internal state exists; not part of Production v1. |
+| Integrated reservation state and registry membership | NOT PRESENT | NOT PRESENT | `raya_integrated_op.reservation_state`, registry and reserved-slot counts; Adapter test-only snapshot copies selected state/counts | No per-record reservation/registry effect proof in Production v1. Aggregate counts do not prove a particular operation's release. |
+| Worker caller-finish / admission lease transition | NOT PRESENT | NOT PRESENT | Worker/integrated counters and transition return values | No immutable per-operation finish result in Production v1. |
+| Submitter ACK result / ACK terminality | NOT PRESENT | NOT PRESENT | Request state becomes ACKED or remains retained; `raya_submitter_acknowledge` can return failure when terminal ACK state is set but lifecycle signaling fails | Production inventory cannot distinguish ACK state from later signal failure or provide a verifiable ACK receipt. |
+| Client callback invocation/result | NOT PRESENT | NOT PRESENT | Adapter release callback invokes callback after successful ACK; callback is `void` | No callback receipt/result exists; invocation cannot be reconstructed from v1 inventory. |
+| Adapter envelope free / buffer reclamation | NOT PRESENT | NOT PRESENT | `adapter_free` mutates active count and frees memory; retained membership/count are observable | Freed objects are absent by definition; v1 is not a historical ledger. |
+| Ownership transfer / handoff substeps | NOT PRESENT | NOT PRESENT | Handoff result and operation owner state are in-memory; test-only snapshot has worker-owned/terminal-released flags | No complete immutable per-step transfer record in Production v1. |
+| Recipient-side WRITE receipt, deduplication, or status | NOT PRESENT | NOT PRESENT | No recipient protocol found in reviewed contract | Fundamentally absent; OS acceptance/completion is not recipient commit. |
+
+### Surface boundary
+
+- `raya_adapter_retained_record_v1` contains only `struct_size`, `version`, Adapter instance/operation IDs, first-retain cause, and first-retain stage.
+- `raya_worker_retained_record_v1` contains only `struct_size`, `version`, Worker identity/kind, optional Adapter identity pair, and first-retain cause/stage.
+- The richer `raya_adapter_test_retained_item` is guarded by `RAYA_ADAPTER_TESTING`; it is a test-only diagnostic snapshot, not a Production API or stable recovery contract. Its selected effect/counter fields must not be represented as available to a Production reconciler.
+- `raya_submitter_snapshot` reports aggregate lifecycle/queue/producer/issue/issuer counts. It does not export a copied per-request ledger. The request's mutable effect fields are Submitter-owned after admission.
+- Owner, finalizer, integrated reservation/registry and Worker operation fields are in-memory state. None of the reviewed Production v1 inventory records preserves a chronological sequence of effect attempts/results, actor, evidence reference, or durable commit boundary.
+
+### Resulting gap classification
+
+1. **Already available for read-only classification:** process-local identity pairs, inventory kind, and immutable first-retain cause/stage in the two independent Production v1 inventories.
+2. **Available only as mutable in-process state or test-only diagnostics:** request/effect states, completion values, owner/finalizer counters, reservation/registry state, and selected Worker/Submitter aggregate counters. These are not a Production v1 per-record effect ledger.
+3. **Not represented by the current implementation contract:** per-handle close outcomes, immutable chronological effect records, callback receipt, authenticated ACK evidence, durable identity/effect history across restart, and recipient-side WRITE receipt/status/idempotency.
+4. **No safe retrofit is authorized in this step:** adding an effect ledger changes production API/implementation and requires a separate reviewed contract, ownership, durability, privacy, and test plan. This mapping does not authorize that implementation or any reconciliation action.
+
+The exact evidence gap is therefore not simply “missing a combined snapshot”: it is missing immutable per-record effect outcomes and trustworthy external-effect evidence. Independent Adapter/Worker snapshots remain intentionally separate; combining their current fields would still not manufacture the absent effect history.
