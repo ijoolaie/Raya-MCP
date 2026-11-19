@@ -1509,6 +1509,8 @@ static int test_destroy_ex_reports_effect_and_reconciliation(void) {
 static int test_shared_worker_two_adapter_success_then_ack_quarantine(void) {
  raya_managed_worker w;
  raya_managed_operation *retained;
+ raya_worker_retained_record_v1 worker_inventory[1];
+ size_t worker_inventory_count=0;
  DWORD retained_cause;
  int retained_stage;
  raya_integrated_submit_adapter a,b;
@@ -1611,6 +1613,21 @@ static int test_shared_worker_two_adapter_success_then_ack_quarantine(void) {
  CHECK(WaitForSingleObject(w.thread,5000)==WAIT_OBJECT_0);
  CHECK(!raya_managed_worker_join(&w,100));
  CHECK(w.joined==TRUE && w.thread==NULL);
+ CHECK(raya_managed_worker_copy_retained_inventory_v1(&w,
+       RAYA_WORKER_RETAINED_RECORD_VERSION_1,worker_inventory,1,
+       &worker_inventory_count)==RAYA_RETAINED_INVENTORY_OK);
+ CHECK(worker_inventory_count==1);
+ CHECK(worker_inventory[0].struct_size==sizeof(worker_inventory[0]));
+ CHECK(worker_inventory[0].version==RAYA_WORKER_RETAINED_RECORD_VERSION_1);
+ CHECK(worker_inventory[0].identity_valid);
+ CHECK(worker_inventory[0].inventory_kind==RAYA_WORKER_INVENTORY_ADAPTER_ASSOCIATED);
+ CHECK(worker_inventory[0].worker_epoch==w.worker_epoch);
+ CHECK(worker_inventory[0].worker_operation_id==retained->worker_operation_id);
+ CHECK(worker_inventory[0].adapter_identity_valid);
+ CHECK(worker_inventory[0].adapter_instance_id==b.instance_id);
+ CHECK(worker_inventory[0].adapter_operation_id==1);
+ CHECK(worker_inventory[0].first_retain_cause==retained_cause);
+ CHECK(worker_inventory[0].first_retain_stage==RAYA_WORKER_RETAIN_STAGE_POST_TERMINAL);
 #ifdef RAYA_ADAPTER_TESTING
  CHECK(raya_adapter_test_retained_snapshot(&b,adapter_items,2,&adapter_count,worker_items,4,&worker_count)==1);
  CHECK(adapter_count==1 && worker_count==1);
