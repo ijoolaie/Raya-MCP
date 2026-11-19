@@ -307,3 +307,40 @@ The frozen v1 design intentionally specifies two independent copied inventories,
 **Current 5.19 disposition: PARTIAL, with the supported production v1 snapshot paths exercised on real Adapter-associated and real DIRECT retained runtime records.** The remaining dependent runtime evidence is the two-independent-Adapter-associated-retained-submissions-on-one-shared-Worker scenario, which is still blocked under 5.16. The successful-A / retained-B experiment proves two Adapter namespaces and separate production snapshots but has only one retained Adapter-associated submission; it must not be counted as two. No further 5.19 code or API change is justified until 5.16's ownership-correct runtime scenario is resolved. This conclusion does not require an atomic cross-plane API or any mutation/recovery capability.
 
 No source, header, test, build script, ABI, lifecycle, ownership, cleanup, recovery, retry, callback, or replay behavior changed in this addendum. Existing test results are cited as already recorded evidence; no new build or test execution is claimed. Stage 5.16 remains BLOCKED; Stage 5.17 remains focused-complete; Stage 5.18 remains PARTIAL; Stage 5.19 remains PARTIAL for the explicit 5.16-dependent runtime scenario; Stage 5.20 remains incomplete. Gate D remains complete with no action approved; Gate E/Gate F remain blocked. Phase 1 remains NOT ACCEPTED; Production remains NO-GO.
+## Addendum - 2026-11-19 mixed-stage two-Adapter retained runtime evidence
+
+Extended `test_shared_worker_two_adapter_success_then_ack_quarantine` using only existing public Adapter submit calls and existing injected callback seams. No production source/header, ABI, build script, lifecycle behavior, or recovery behavior changed.
+
+### Runtime sequence and exact retained classes
+
+1. Adapter A / Submitter A submits operation ID 1 through the shared Worker. The real named-pipe READ completes, Worker finalization succeeds, Submitter ACK succeeds, and the completion callback runs once. Adapter A has no retained envelope at this point.
+2. Adapter B / Submitter B submits operation ID 1 through the same Worker. Its real named-pipe READ completes and Worker terminal release succeeds. The existing exact-event ACK fault is injected for Submitter B. The Adapter release callback retains B's envelope as `SUBMITTER_ACK`; the corresponding Worker record is `ADAPTER_ASSOCIATED` with `POST_TERMINAL` stage and `OWNERSHIP_INVARIANT` first cause. The B completion callback is suppressed and the shared Worker becomes `DEGRADED`.
+3. After that degradation, a second real public submit call is made through Adapter A (Adapter operation ID 2). The Worker identity registration succeeds on the still-initialized shared Worker object, then Worker admission rejects because the lifecycle is `DEGRADED`. The existing Adapter-local `close_handle` callback is configured to fail during the resulting pre-issue finalizer cleanup. The real Adapter path retains A's envelope with `HANDLE_CLOSE_FAILURE`; its Worker inventory record has the matching Adapter identity pair, `ADAPTER_ASSOCIATED` stage, and `HANDLE_CLOSE` first cause. No Submitter admission, OS I/O issue, or completion callback occurs for this second A operation.
+
+This is a deterministic, non-fabricated way to produce two independent Adapter-associated retained records on one shared Worker: A instance / operation 2 and B instance / operation 1. Their Worker epoch is shared while their Worker operation IDs are distinct. The two records have different, explicitly asserted retain causes and stages. This proves two retained records from two real Adapter API submissions, but it is **not** evidence of two OS-issued operations or two post-terminal ACK failures. The strict dual-independent-ACK-failure path described in the dispatcher-foundation plan remains unproven and is not reclassified as complete.
+
+### Snapshot evidence
+
+After both Adapter admission gates are closed, both Submitters are quiesced, and the shared Worker is joined:
+
+- Production Adapter v1 inventory returns one record for Adapter A (operation 2, `HANDLE_CLOSE_FAILURE`) and one for Adapter B (operation 1, `SUBMITTER_ACK`).
+- Production Worker v1 inventory returns both actual records, with distinct Worker operation IDs and exact matching Adapter identity pairs.
+- The test-only per-Adapter snapshots are taken separately for A and B. Their Adapter records are combined only in caller-owned test storage and validated against the copied shared Worker list; no atomic cross-plane snapshot is claimed.
+- The A retained duplicated handles remain open and tracked, as required by quarantine. The test verifies their handles remain valid. No retained resource is released, retried, replayed, or deleted.
+
+### Validation
+
+- Standard prescribed `build-integrated-submit-adapter-v2-api-test.cmd`: `/W4 /WX` build PASS; 10 consecutive runs PASS; 1,042 assertions across 66 cases per run (10,420 assertion executions).
+- Explicit `/DRAYA_ADAPTER_TESTING` build: `/W4 /WX` build PASS; one execution PASS; 1,258 assertions across 68 cases. The combined test-only validator accepted both Adapter snapshots against the shared Worker inventory.
+- `git diff --check`: PASS.
+- The prescribed script removed its declared outputs; the explicit hook build's exact EXE/OBJ outputs were removed afterward. The output audit found no declared build artifacts left.
+
+### Updated disposition
+
+- 5.16: PARTIAL / NOT COMPLETE. Two independent Adapter-associated retained records and their identity pairs are now proven through real runtime paths. The stricter planned scenario in which both independent operations are OS-issued and each reaches its own post-terminal ACK-failure path remains unproven; this addendum does not claim it.
+- 5.17: focused DIRECT retained-path identity coverage remains complete.
+- 5.18: PARTIAL. The Adapter Worker-admission-rejected / Adapter-local close-failure runtime branch is now covered; other distinct runtime retain branches and DIRECT `discard_unissued` remain outstanding.
+- 5.19: PARTIAL. Production Adapter v1 snapshots now capture both real Adapter namespaces and production Worker v1 inventory captures both real records. The supported v1 per-plane consistency model is demonstrated; the remaining acceptance dependency is the stricter 5.16 dual-ACK runtime scenario. No atomic cross-plane API is required or claimed.
+- 5.20: incomplete; no reconciliation action is approved and no recovery/release/retry/replay API is authorized.
+- Gate D remains complete with no action approved; Gate E and Gate F remain blocked.
+- Phase 1 remains NOT ACCEPTED; Production remains NO-GO.

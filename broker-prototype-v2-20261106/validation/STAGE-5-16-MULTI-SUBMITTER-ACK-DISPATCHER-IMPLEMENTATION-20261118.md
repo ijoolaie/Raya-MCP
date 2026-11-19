@@ -49,3 +49,9 @@ Next:
 - Stage 5 implementation/recovery acceptance: BLOCKED / NOT ACCEPTED.
 - Phase 1: NOT ACCEPTED.
 - Production: NO-GO.
+
+## Addendum - 2026-11-19 mixed-stage shared-Worker retained records
+
+The main Stage 5.16-5.20 execution report now records a real two-Adapter / two-Submitter / one-Worker runtime test with two distinct Adapter-associated retained records and production Adapter/Worker v1 inventory evidence. The second record is reached through a real Adapter submit call after the shared Worker is already degraded: Worker admission rejects it and the existing Adapter-local close callback fails during pre-issue cleanup. The first record is the real post-terminal ACK-quarantine path. Both have distinct Worker identities and exact Adapter identity pairs; both Adapter snapshots and the shared Worker inventory are validated.
+
+This supersedes the earlier statement that no second independent Adapter-associated retained record had been proven. It does **not** satisfy the stricter remaining item in this dispatcher plan: two independent operations each OS-issued and each reaching its own post-terminal ACK-failure path before the other Submitter is degraded. Stage 5.16 therefore remains PARTIAL / NOT COMPLETE. No production code, fault hook, or ACK/degradation semantics changed.

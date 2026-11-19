@@ -48,3 +48,9 @@ First perform a narrow source review of Worker shared-consumer assumptions and A
 - Stage 5: BLOCKED / NOT ACCEPTED.
 - Phase 1: NOT ACCEPTED.
 - Production: NO-GO.
+
+## Addendum - 2026-11-19 runtime evidence superseding the source-only feasibility result
+
+The earlier statement that no second independent Adapter-associated retained operation was created was accurate for that source-review pass but is superseded by the mixed-stage runtime test documented in `STAGE-5-16-TO-5-20-EXECUTION-RESULTS-20261118.md`. Two real Adapter API submissions, from separate Adapter/Submitter pairs sharing one Worker, now produce two retained envelopes and two identity-bearing Worker inventory records. One is B's post-terminal ACK quarantine; the other is A's pre-issue Worker-admission rejection followed by an injected Adapter-local close failure. Separate production Adapter v1 inventories and the shared production Worker v1 inventory capture both records.
+
+The exact dual-ACK scenario proposed in this feasibility document remains unproven: the second operation was not admitted to the Worker or issued to the OS, because the shared Worker had already degraded. Accordingly, this result is additional supported evidence, not acceptance of the stricter dual-ACK test requirement. No production behavior or recovery semantics changed.
