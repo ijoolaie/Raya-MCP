@@ -420,7 +420,54 @@ static int test_request_identity_and_effect_commit(void) {
  cleanup_test_state(&s);
  return 0;
 }
-static int test_publish_failure_effect_ledger(void) {
+static HANDLE g_publish_entered=NULL;
+static HANDLE g_publish_release=NULL;
+static int publish_blocked_fail_counted(raya_submitter_request *r, void *c) {
+ (void)r; (void)c; (void)InterlockedIncrement(&g_publish_fail_calls);
+ if (!SetEvent(g_publish_entered)) return 0;
+ if (WaitForSingleObject(g_publish_release,5000)!=WAIT_OBJECT_0) return 0;
+ return 0;
+}
+static int test_queued_request_remains_quarantined_after_uncertain_publish(void) {
+ raya_dedicated_submitter s;
+ raya_submitter_request req1,req2;
+ raya_submitter_lifecycle life;
+ size_t q=0,p=0,a=0,l=0;
+ ZeroMemory(&g,sizeof(g)); ZeroMemory(&s,sizeof(s));
+ ZeroMemory(&req1,sizeof(req1)); ZeroMemory(&req2,sizeof(req2));
+ g_issue_accepted_calls=0; g_publish_fail_calls=0;
+ g_publish_entered=CreateEventW(NULL,TRUE,FALSE,NULL);
+ g_publish_release=CreateEventW(NULL,TRUE,FALSE,NULL);
+ CHECK(g_publish_entered!=NULL && g_publish_release!=NULL);
+ CHECK(raya_submitter_start_with_api(&s,2,&injected_api,issue_accepted_counted,
+                                     publish_blocked_fail_counted,not_issued_counted,NULL));
+ CHECK(raya_submitter_admit(&s,&req1,NULL));
+ CHECK(raya_submitter_admit(&s,&req2,NULL));
+ CHECK(req1.request_id==1 && req2.request_id==2);
+ CHECK(raya_submitter_enqueue(&s,&req1)==RAYA_SUBMITTER_OK);
+ CHECK(WaitForSingleObject(g_publish_entered,5000)==WAIT_OBJECT_0);
+ CHECK(req1.issue_effect==RAYA_SUBMITTER_EFFECT_COMMITTED);
+ CHECK(req1.publish_effect==RAYA_SUBMITTER_EFFECT_IN_PROGRESS);
+ CHECK(raya_submitter_enqueue(&s,&req2)==RAYA_SUBMITTER_OK);
+ CHECK(req2.state==RAYA_SUBMITTER_REQ_QUEUED);
+ CHECK(raya_submitter_snapshot(&s,&life,&q,&p,&a,&l));
+ CHECK(life==RAYA_SUBMITTER_RUNNING && q==1 && p==0 && a==1 && l==1);
+ CHECK(SetEvent(g_publish_release));
+ CHECK(WaitForSingleObject(s.thread,5000)==WAIT_OBJECT_0);
+ CHECK(req1.state==RAYA_SUBMITTER_REQ_UNCERTAIN);
+ CHECK(req1.issue_effect==RAYA_SUBMITTER_EFFECT_COMMITTED);
+ CHECK(req1.publish_effect==RAYA_SUBMITTER_EFFECT_UNKNOWN);
+ CHECK(req2.state==RAYA_SUBMITTER_REQ_QUEUED);
+ CHECK(raya_submitter_snapshot(&s,&life,&q,&p,&a,&l));
+ CHECK(life==RAYA_SUBMITTER_DEGRADED && q==1 && p==0 && a==0 && l==1);
+ CHECK(s.degraded_queue_count==1 && s.degraded_active_issue==0 && s.degraded_issuer_leases==1);
+ CHECK(g_issue_accepted_calls==1 && g_publish_fail_calls==1);
+ CHECK(g.not_issued_calls==0);
+ cleanup_test_state(&s);
+ CloseHandle(g_publish_entered); CloseHandle(g_publish_release);
+ g_publish_entered=NULL; g_publish_release=NULL;
+ return 0;
+}static int test_publish_failure_effect_ledger(void) {
  raya_dedicated_submitter s;
  raya_submitter_request req;
  raya_submitter_request req2;
@@ -734,6 +781,7 @@ int main(void) {
  if (test_get_exit_code_failure()) return 1;
  if (test_queued_request_remains_quarantined_after_uncertain_issue()) return 1;
  if (test_request_identity_and_effect_commit()) return 1;
+ if (test_queued_request_remains_quarantined_after_uncertain_publish()) return 1;
  if (test_publish_failure_effect_ledger()) return 1;
  if (test_issue_uncertain_effect_ledger()) return 1;
  if (test_enqueue_set_failure()) return 1;

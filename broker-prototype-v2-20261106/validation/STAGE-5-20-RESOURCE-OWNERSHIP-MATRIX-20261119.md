@@ -1,4 +1,4 @@
-﻿# Stage 5.20 Source-Backed Resource Ownership and Failure-Class Matrix (2026-11-19)
+# Stage 5.20 Source-Backed Resource Ownership and Failure-Class Matrix (2026-11-19)
 
 ## Purpose and decision boundary
 
@@ -137,3 +137,9 @@ The existing Issue callback seam now deterministically holds the first Issue whi
 - Issue callback count is exactly one; Publish and NOT_ISSUED callback counts are zero.
 
 The deterministic sequence uses only existing public admission/enqueue/snapshot APIs and the existing Issue callback seam; no internal state mutation, new fault hook, or Production change. The prescribed VS 2026 BuildTools 18.7.3 x64 `/W4 /WX` failure-matrix build passed 25 consecutive runs × 332 assertions = 8,300 assertion executions. This is negative same-process Submitter evidence only. The queued request's eventual disposition remains deliberately unresolved/quarantined; this test does not authorize draining, aborting, releasing, retrying, or replaying it, and provides no recipient-side WRITE or restart evidence.
+
+## Negative queued-work quarantine after uncertain Publish
+
+The existing Publish callback seam now deterministically holds request 1 after its Issue callback returns ACCEPTED and before Publish returns uncertain/failure. While Publish is held, request 2 is admitted and queued. The test then releases Publish to fail and observes the Submitter worker exit DEGRADED. Assertions establish: request 1 is UNCERTAIN with Issue COMMITTED and Publish UNKNOWN; request 2 remains QUEUED and is neither issued nor marked NOT_ISSUED; queue count remains one; `active_issue` returns to zero while `issuer_leases` remains one; Issue callback count is exactly one, Publish callback count exactly one, and NOT_ISSUED count zero. The captured degraded snapshot preserves queue=1, active_issue=0, issuer_leases=1. The test uses only existing public APIs and callbacks, with deterministic Win32 event synchronization; no new hook, internal state mutation, or Production change.
+
+Prescribed VS 2026 BuildTools 18.7.3 x64 `/W4 /WX` failure-matrix build passed 25 consecutive runs × 356 assertions = 8,900 assertion executions. This is same-process Submitter evidence only. Queued work remains unresolved/quarantined; no drain, abort, release, retry, replay, restart recovery, or recipient-side WRITE claim is supported. Stage 5.20 remains INCOMPLETE; Gate D no action approved; Gate E blocked; Phase 1 NOT ACCEPTED; Production NO-GO.
