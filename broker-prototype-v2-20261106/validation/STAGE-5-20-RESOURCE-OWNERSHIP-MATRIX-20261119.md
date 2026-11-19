@@ -109,3 +109,14 @@ This subsection resolves the next bounded question by comparing the actual publi
 4. **No safe retrofit is authorized in this step:** adding an effect ledger changes production API/implementation and requires a separate reviewed contract, ownership, durability, privacy, and test plan. This mapping does not authorize that implementation or any reconciliation action.
 
 The exact evidence gap is therefore not simply “missing a combined snapshot”: it is missing immutable per-record effect outcomes and trustworthy external-effect evidence. Independent Adapter/Worker snapshots remain intentionally separate; combining their current fields would still not manufacture the absent effect history.
+
+## Negative no-replay evidence at the Submitter boundary
+
+The existing Submitter failure-matrix test now counts the injected callbacks for the two ambiguous-effect branches without changing production code or callback semantics:
+
+- **Issue outcome uncertain:** the Issue callback is observed exactly once; Publish is observed zero times; `not_issued` is observed zero times; request state is `UNCERTAIN`; Issue effect is `UNKNOWN`; Publish remains `NOT_ATTEMPTED`; Submitter records `ISSUE_UNCERTAIN` and exits its worker thread. This prevents treating an uncertain Issue as NOT_ISSUED and provides a direct assertion against a second Issue or Publish invocation during this worker execution.
+- **Publish outcome uncertain after accepted Issue:** Issue is observed exactly once; Publish exactly once; `not_issued` zero times; request state is `UNCERTAIN`; Issue effect is `COMMITTED`; Publish effect is `UNKNOWN`; Submitter records `PUBLISH_UNCERTAIN` and exits its worker thread. This prevents an automatic second Issue/Publish attempt in this path.
+
+Validation used the existing `build-dedicated-io-submitter-v2-failure-test.cmd` script with VS 2026 BuildTools 18.7.3 x64 and `/W4 /WX`: 25 consecutive passes, 302 assertions per pass (7,550 assertion executions). The test uses the existing public Submitter issue/publish/not-issued callback seams. Production source/header/API and runtime behavior are unchanged.
+
+This evidence is intentionally narrow: it proves no callback replay within these Submitter worker executions. It does not prove recipient-side WRITE commit, durable no-replay across process restart, or end-to-end Adapter/Worker recovery. Those remain unsupported and unauthorized. No new positive recovery/reconciliation action is implied.

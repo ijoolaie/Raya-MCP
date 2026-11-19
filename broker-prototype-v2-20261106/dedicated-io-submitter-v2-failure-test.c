@@ -16,6 +16,8 @@ typedef struct {
 } fault_plan;
 
 static fault_plan g;
+static volatile LONG g_issue_uncertain_calls, g_issue_accepted_calls;
+static volatile LONG g_publish_noop_calls, g_publish_fail_calls;
 static HANDLE WINAPI f_create_event(LPSECURITY_ATTRIBUTES a, BOOL m, BOOL i, LPCWSTR n) {
  LONG call=InterlockedIncrement(&g.create_event_calls);
  if (call==g.fail_create_event_at) { SetLastError(ERROR_NOT_ENOUGH_MEMORY); return NULL; }
@@ -66,6 +68,7 @@ static raya_submitter_issue_result issue_noop(raya_submitter_request *r, void *c
  (void)r; (void)c; return RAYA_SUBMITTER_ISSUE_NOT_ACCEPTED;
 }
 static int publish_noop(raya_submitter_request *r, void *c) { (void)r; (void)c; return 1; }
+static int publish_noop_counted(raya_submitter_request *r, void *c) { (void)r; (void)c; (void)InterlockedIncrement(&g_publish_noop_calls); return 1; }
 static void not_issued_noop(raya_submitter_request *r, void *c) { (void)r; (void)c; }
 static void not_issued_counted(raya_submitter_request *r, void *c) {
  (void)r; (void)c; (void)InterlockedIncrement(&g.not_issued_calls);
@@ -323,6 +326,8 @@ static int test_destroy_close_failure(void) {
 static raya_submitter_issue_result issue_accepted(raya_submitter_request *r, void *c) {
  (void)r; (void)c; return RAYA_SUBMITTER_ISSUE_ACCEPTED;
 }
+static raya_submitter_issue_result issue_accepted_counted(raya_submitter_request *r, void *c) { (void)r; (void)c; (void)InterlockedIncrement(&g_issue_accepted_calls); return RAYA_SUBMITTER_ISSUE_ACCEPTED; }
+
 static int wait_for_request_state(raya_dedicated_submitter *s,
  raya_submitter_request *r, raya_submitter_request_state expected) {
  DWORD start=GetTickCount();
@@ -339,8 +344,10 @@ static int wait_for_request_state(raya_dedicated_submitter *s,
 static int publish_fail(raya_submitter_request *r, void *c) {
  (void)r; (void)c; return 0;
 }
+static int publish_fail_counted(raya_submitter_request *r, void *c) { (void)r; (void)c; (void)InterlockedIncrement(&g_publish_fail_calls); return 0; }
+
 static raya_submitter_issue_result issue_uncertain_now(raya_submitter_request *r, void *c) {
- (void)r; (void)c; return RAYA_SUBMITTER_ISSUE_UNCERTAIN;
+ (void)r; (void)c; (void)InterlockedIncrement(&g_issue_uncertain_calls); return RAYA_SUBMITTER_ISSUE_UNCERTAIN;
 }
 static int test_request_identity_and_effect_commit(void) {
  raya_dedicated_submitter s;
@@ -373,8 +380,9 @@ static int test_publish_failure_effect_ledger(void) {
  raya_dedicated_submitter s;
  raya_submitter_request req;
  ZeroMemory(&g,sizeof(g)); ZeroMemory(&s,sizeof(s)); ZeroMemory(&req,sizeof(req));
- CHECK(raya_submitter_start_with_api(&s,2,&injected_api,issue_accepted,
-                                     publish_fail,not_issued_noop,NULL));
+ g_issue_accepted_calls=0; g_publish_fail_calls=0;
+ CHECK(raya_submitter_start_with_api(&s,2,&injected_api,issue_accepted_counted,
+                                     publish_fail_counted,not_issued_counted,NULL));
  CHECK(raya_submitter_admit(&s,&req,NULL));
  CHECK(req.request_id==1);
  CHECK(raya_submitter_enqueue(&s,&req)==RAYA_SUBMITTER_OK);
@@ -386,6 +394,9 @@ static int test_publish_failure_effect_ledger(void) {
  CHECK(s.degraded_request_id==req.request_id);
  CHECK(s.degraded_issue_effect==RAYA_SUBMITTER_EFFECT_COMMITTED);
  CHECK(s.degraded_publish_effect==RAYA_SUBMITTER_EFFECT_UNKNOWN);
+ CHECK(g_issue_accepted_calls==1);
+ CHECK(g_publish_fail_calls==1);
+ CHECK(g.not_issued_calls==0);
  cleanup_test_state(&s);
  return 0;
 }
@@ -393,8 +404,9 @@ static int test_issue_uncertain_effect_ledger(void) {
  raya_dedicated_submitter s;
  raya_submitter_request req;
  ZeroMemory(&g,sizeof(g)); ZeroMemory(&s,sizeof(s)); ZeroMemory(&req,sizeof(req));
+ g_issue_uncertain_calls=0; g_publish_noop_calls=0;
  CHECK(raya_submitter_start_with_api(&s,2,&injected_api,issue_uncertain_now,
-                                     publish_noop,not_issued_noop,NULL));
+                                     publish_noop_counted,not_issued_counted,NULL));
  CHECK(raya_submitter_admit(&s,&req,NULL));
  CHECK(req.request_id==1);
  CHECK(raya_submitter_enqueue(&s,&req)==RAYA_SUBMITTER_OK);
@@ -405,6 +417,9 @@ static int test_issue_uncertain_effect_ledger(void) {
  CHECK(s.degraded_reason==RAYA_SUBMITTER_DEGRADED_REASON_ISSUE_UNCERTAIN);
  CHECK(s.degraded_request_id==req.request_id);
  CHECK(s.degraded_issue_effect==RAYA_SUBMITTER_EFFECT_UNKNOWN);
+ CHECK(g_issue_uncertain_calls==1);
+ CHECK(g_publish_noop_calls==0);
+ CHECK(g.not_issued_calls==0);
  cleanup_test_state(&s);
  return 0;
 }
