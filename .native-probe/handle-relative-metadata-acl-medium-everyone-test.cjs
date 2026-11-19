@@ -1,0 +1,84 @@
+"use strict";
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { execFileSync } = require("node:child_process");
+const addon = require("./build/Release/napi_probe_raya_phase1_hardlink_guard.node");
+
+function icacls(target, ...args) {
+  return execFileSync("icacls.exe", [target, ...args], {
+    encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "pipe"]
+  });
+}
+function isAccessDenied(error) {
+  return /0xC0000022|STATUS_ACCESS_DENIED|access is denied/i.test(String(error && error.message));
+}
+
+const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "raya-medium-everyone-ra-"));
+const root = path.join(fixture, "root");
+const parentPath = path.join(root, "parent");
+const filePath = path.join(parentPath, "everyone-ra-canary.txt");
+const principal = "*S-1-1-0";
+const baseline = addon.processHandleCount();
+let parent = null;
+let denyApplied = false;
+
+try {
+  fs.mkdirSync(parentPath, { recursive: true });
+  fs.writeFileSync(filePath, "EVERYONE-RA-CANARY", { flag: "wx" });
+  parent = addon.openParentRelative(root, "parent");
+  const before = addon.inspectChildFromParent(parent, "everyone-ra-canary.txt");
+
+  icacls(filePath, "/deny", principal + ":(RA)");
+  denyApplied = true;
+  const aclListing = icacls(filePath);
+  const hasExplicitDeny = /DENY/i.test(aclListing);
+  const hasReadAttributesMask = /RA/i.test(aclListing);
+  if (!hasExplicitDeny || !hasReadAttributesMask) {
+    throw new Error("icacls output did not visibly confirm DENY + RA ACE: " + aclListing);
+  }
+
+  let denied = false;
+  let observedError = null;
+  let during = null;
+  try {
+    during = addon.inspectChildFromParent(parent, "everyone-ra-canary.txt");
+  } catch (error) {
+    denied = isAccessDenied(error);
+    observedError = String(error && error.message || error);
+    if (!denied) throw error;
+  }
+
+  addon.closeParentHandle(parent);
+  parent = null;
+  icacls(filePath, "/remove:d", principal);
+  denyApplied = false;
+
+  parent = addon.openParentRelative(root, "parent");
+  const after = addon.inspectChildFromParent(parent, "everyone-ra-canary.txt");
+  addon.closeParentHandle(parent);
+  parent = null;
+
+  assert.equal(after.isRegularFile, true);
+  assert.equal(addon.processHandleCount(), baseline, "native HANDLE count must return to baseline");
+
+  console.log(JSON.stringify({
+    ok: true,
+    denyPrincipal: "Everyone (S-1-1-0)",
+    exactAclListing: aclListing.trim(),
+    beforeAclMetadataReadSucceeded: !!before.isRegularFile,
+    metadataReadDeniedUnderEveryoneReadAttributesDeny: denied,
+    metadataReadSucceededUnderEveryoneReadAttributesDeny: !!during,
+    metadataReadError: observedError,
+    metadataReadSucceededAfterAclRestore: !!after.isRegularFile,
+    handleCountReturnedToBaseline: true,
+    scope: "one disposable temp NTFS file; only explicit Everyone deny ACE removed; no workspace/global ACL changed"
+  }, null, 2));
+} finally {
+  if (parent) { try { addon.closeParentHandle(parent); } catch {} }
+  if (denyApplied) {
+    try { icacls(filePath, "/remove:d", principal); } catch {}
+  }
+  fs.rmSync(fixture, { recursive: true, force: true });
+}

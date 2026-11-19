@@ -1,0 +1,21 @@
+strict digraph DiskGraph {
+node [shape=box,style=rounded]
+nodesep=0.35;
+subgraph cluster_graph {
+color="white";
+5565671379126240548 [label="/\\ matchIndex = 0\n/\\ responseOrder = <<>>\n/\\ messages = { [matchIndex |-> 0, kind |-> \"RESP\", requestId |-> 2, success |-> FALSE],\n  [matchIndex |-> 1, kind |-> \"RESP\", requestId |-> 1, success |-> TRUE] }\n/\\ nextIndex = 2\n/\\ lastRequestId = 2",style = filled]
+5565671379126240548 -> -7420421311124191276 [label="",color="black",fontcolor="black"];
+-7420421311124191276 [label="/\\ matchIndex = 0\n/\\ responseOrder = <<2>>\n/\\ messages = {[matchIndex |-> 1, kind |-> \"RESP\", requestId |-> 1, success |-> TRUE]}\n/\\ nextIndex = 1\n/\\ lastRequestId = 2",tooltip="/\\ matchIndex = 0\n/\\ responseOrder = <<2>>\n/\\ messages = {[matchIndex |-> 1, kind |-> \"RESP\", requestId |-> 1, success |-> TRUE]}\n/\\ nextIndex = 1\n/\\ lastRequestId = 2"];
+5565671379126240548 -> 6723159338716312589 [label="",color="black",fontcolor="black"];
+6723159338716312589 [label="/\\ matchIndex = 1\n/\\ responseOrder = <<1>>\n/\\ messages = {[matchIndex |-> 0, kind |-> \"RESP\", requestId |-> 2, success |-> FALSE]}\n/\\ nextIndex = 2\n/\\ lastRequestId = 2",tooltip="/\\ matchIndex = 1\n/\\ responseOrder = <<1>>\n/\\ messages = {[matchIndex |-> 0, kind |-> \"RESP\", requestId |-> 2, success |-> FALSE]}\n/\\ nextIndex = 2\n/\\ lastRequestId = 2"];
+-7420421311124191276 -> -7843400027356758166 [label="",color="black",fontcolor="black"];
+-7843400027356758166 [label="/\\ matchIndex = 1\n/\\ responseOrder = <<2, 1>>\n/\\ messages = {}\n/\\ nextIndex = 2\n/\\ lastRequestId = 2",tooltip="/\\ matchIndex = 1\n/\\ responseOrder = <<2, 1>>\n/\\ messages = {}\n/\\ nextIndex = 2\n/\\ lastRequestId = 2"];
+6723159338716312589 -> 483083174086307769 [label="",color="black",fontcolor="black"];
+483083174086307769 [label="/\\ matchIndex = 1\n/\\ responseOrder = <<1, 2>>\n/\\ messages = {}\n/\\ nextIndex = 1\n/\\ lastRequestId = 2",tooltip="/\\ matchIndex = 1\n/\\ responseOrder = <<1, 2>>\n/\\ messages = {}\n/\\ nextIndex = 1\n/\\ lastRequestId = 2"];
+-7843400027356758166 -> -7843400027356758166 [label="",color="black",fontcolor="black"];
+483083174086307769 -> 483083174086307769 [label="",color="black",fontcolor="black"];
+{rank = same; 5565671379126240548;}
+{rank = same; -7420421311124191276;6723159338716312589;}
+{rank = same; 483083174086307769;-7843400027356758166;}
+}
+}

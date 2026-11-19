@@ -69,6 +69,17 @@ function checkedPath(input) {
   }
   return target;
 }
+function safeChildEnv(overrides = {}) {
+  const allowed = ["PATH","SystemRoot","WINDIR","TEMP","TMP","USERPROFILE","APPDATA","LOCALAPPDATA","ProgramFiles","ProgramFiles(x86)","ComSpec","PROCESSOR_ARCHITECTURE","PATHEXT"];
+  const out = {};
+  for (const key of allowed) if (process.env[key] !== undefined) out[key] = process.env[key];
+  for (const [key, value] of Object.entries(overrides)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw new Error("Invalid environment variable name.");
+    if (/TOKEN|SECRET|PASSWORD|API_KEY|CREDENTIAL|AUTH/i.test(key)) throw new Error("Setting secret-like environment variables is blocked.");
+    out[key] = value;
+  }
+  return out;
+}
 function textResult(value) {
   return { content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }] };
 }
@@ -129,11 +140,29 @@ function createMcpServer() {
     if (stat.size > MAX_READ_BYTES) throw new Error("File is larger than 256 KiB; choose a smaller file.");
     return textResult(await fs.readFile(target, "utf8"));
   });
+  registerAuditedTool(server, "file_read_chunk", "Read a UTF-8 file in bounded byte chunks. Use offsetBytes from the previous response until complete.", {
+    path: z.string(), offsetBytes: z.number().int().min(0).optional().default(0),
+    maxBytes: z.number().int().min(1).max(MAX_READ_BYTES).optional().default(MAX_READ_BYTES)
+  }, async ({ path: input, offsetBytes, maxBytes }) => {
+    const target = checkedPath(input), stat = await fs.stat(target);
+    if (!stat.isFile()) throw new Error("Path is not a file.");
+    if (offsetBytes > stat.size) throw new Error("offsetBytes exceeds file size.");
+    const length = Math.min(maxBytes, stat.size - offsetBytes);
+    const handle = await fs.open(target, "r");
+    try {
+      const buffer = Buffer.alloc(length);
+      const { bytesRead } = await handle.read(buffer, 0, length, offsetBytes);
+      return textResult({ path: target, offsetBytes, nextOffsetBytes: offsetBytes + bytesRead,
+        totalBytes: stat.size, done: offsetBytes + bytesRead >= stat.size,
+        contentBase64: buffer.subarray(0, bytesRead).toString("base64") });
+    } finally { await handle.close(); }
+  });
   registerAuditedTool(server, "file_write", "Write a UTF-8 text file inside an allowed workspace. Existing files are protected unless overwrite=true is explicitly supplied.", {
     path: z.string(),
     content: z.string().max(MAX_WRITE_BYTES),
     overwrite: z.boolean().optional().default(false)
   }, async ({ path: input, content, overwrite }) => {
+    if (Buffer.byteLength(content, "utf8") > MAX_WRITE_BYTES) throw new Error("UTF-8 content is larger than 256 KiB.");
     const target = checkedPath(input);
     if (!insideRoot(path.dirname(target))) throw new Error("Parent directory is outside the workspace allowlist.");
     try {
@@ -145,6 +174,38 @@ function createMcpServer() {
     await fs.mkdir(path.dirname(target), { recursive: true });
     await fs.writeFile(target, content, { encoding: "utf8", flag: overwrite ? "w" : "wx" });
     return textResult({ written: target, bytes: Buffer.byteLength(content), overwritten: overwrite });
+  });
+  registerAuditedTool(server, "file_write_chunk", "Upload a new UTF-8 file in ordered chunks; the target appears only after the final chunk is received.", {
+    path: z.string(), uploadId: z.string().uuid(), content: z.string().max(200000),
+    offsetBytes: z.number().int().min(0), totalBytes: z.number().int().min(0).max(32 * 1024 * 1024)
+  }, async ({ path: input, uploadId, content, offsetBytes, totalBytes }) => {
+    const target = checkedPath(input);
+    if (!insideRoot(path.dirname(target))) throw new Error("Parent directory is outside the workspace allowlist.");
+    const chunk = Buffer.from(content, "utf8");
+    if (chunk.length > 200 * 1024 || offsetBytes + chunk.length > totalBytes) throw new Error("Chunk size or range is invalid.");
+    const temp = target + ".raya-upload-" + uploadId;
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    let handle;
+    try {
+      if (offsetBytes === 0) handle = await fs.open(temp, "wx");
+      else {
+        handle = await fs.open(temp, "r+");
+        const st = await handle.stat();
+        if (st.size !== offsetBytes) throw new Error("Upload offset mismatch; expected " + st.size + ".");
+      }
+      await handle.write(chunk, 0, chunk.length, offsetBytes);
+      await handle.sync();
+      const st = await handle.stat();
+      await handle.close(); handle = null;
+      if (st.size !== totalBytes) return textResult({ uploadId, receivedBytes: st.size, totalBytes, complete: false, nextOffsetBytes: st.size });
+      try { await fs.access(target); throw new Error("Target already exists; chunk upload never overwrites existing files."); }
+      catch (e) { if (e.code !== "ENOENT") throw e; }
+      await fs.rename(temp, target);
+      return textResult({ written: target, bytes: totalBytes, complete: true });
+    } catch (e) {
+      if (handle) await handle.close().catch(() => {});
+      throw e;
+    }
   });
   const presets = {
     git_status: { exe: "git", args: ["status", "--short", "--branch"] },
@@ -172,7 +233,7 @@ function createMcpServer() {
             args: ["/d", "/s", "/c", `npm.cmd run ${check === "npm_test" ? "test" : "lint"}`]
           }
         : preset;
-      const child = spawn(command.exe, command.args, { cwd: workdir, windowsHide: true, shell: false, env: process.env });
+      const child = spawn(command.exe, command.args, { cwd: workdir, windowsHide: true, shell: false, env: safeChildEnv() });
       let stdout = "", stderr = "";
       child.stdout.on("data", b => { stdout = (stdout + b.toString()).slice(-MAX_COMMAND_OUTPUT); });
       child.stderr.on("data", b => { stderr = (stderr + b.toString()).slice(-MAX_COMMAND_OUTPUT); });
@@ -200,7 +261,7 @@ function createMcpServer() {
         cwd: workdir,
         windowsHide: true,
         shell: false,
-        env: process.env
+        env: safeChildEnv()
       });
       let stdout = "", stderr = "", settled = false;
       const finish = (value) => {

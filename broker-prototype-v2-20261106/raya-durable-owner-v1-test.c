@@ -1,0 +1,22 @@
+#include "raya-durable-owner-v1.h"
+#include <stdio.h>
+#include <string.h>
+static unsigned n,fail;
+#define C(x) do{++n;if(!(x)){++fail;printf("FAIL %d: %s\n",__LINE__,#x);}}while(0)
+static void WINAPI issue(void*c,const raya_durable_operation_id_v1*i,raya_durable_issue_result_v1*r){(void)c;(void)i;(void)r;}
+static void WINAPI handoff(void*c,const raya_durable_operation_id_v1*i,raya_durable_handoff_result_v1*r){(void)c;(void)i;(void)r;}
+int main(void){raya_durable_owner_v1 o;raya_durable_callbacks_v1 cb;ULONGLONG a,b;unsigned i;memset(&cb,0,sizeof(cb));cb.struct_size=sizeof(cb);cb.schema_version=1;cb.issue=issue;cb.handoff=handoff;
+C(raya_durable_owner_init_v1(NULL,&cb)==RAYA_DURABLE_OWNER_INVALID_V1);C(raya_durable_owner_init_v1(&o,&cb)==RAYA_DURABLE_OWNER_OK_V1);C(raya_durable_owner_admit_v1(&o,&a)==RAYA_DURABLE_OWNER_BUSY_V1);C(raya_durable_owner_activate_v1(&o)==RAYA_DURABLE_OWNER_OK_V1);C(raya_durable_owner_activate_v1(&o)==RAYA_DURABLE_OWNER_INVALID_V1);
+C(raya_durable_owner_admit_v1(&o,&a)==RAYA_DURABLE_OWNER_OK_V1&&a==1);C(raya_durable_owner_admit_v1(&o,&b)==RAYA_DURABLE_OWNER_OK_V1&&b==2);C(o.in_flight==2);C(raya_durable_owner_begin_close_v1(&o)==RAYA_DURABLE_OWNER_BUSY_V1);C(raya_durable_owner_admit_v1(&o,&b)==RAYA_DURABLE_OWNER_BUSY_V1&&b==0);C(raya_durable_owner_complete_v1(&o,1,RAYA_DURABLE_CALLBACK_KNOWN_V1)==RAYA_DURABLE_OWNER_OK_V1);C(raya_durable_owner_complete_v1(&o,1,RAYA_DURABLE_CALLBACK_KNOWN_V1)==RAYA_DURABLE_OWNER_INVALID_V1);C(raya_durable_owner_complete_v1(&o,2,RAYA_DURABLE_CALLBACK_KNOWN_V1)==RAYA_DURABLE_OWNER_OK_V1);C(raya_durable_owner_finish_close_v1(&o)==RAYA_DURABLE_OWNER_OK_V1);C(o.state==RAYA_DURABLE_OWNER_CLOSED_V1&&o.callbacks==NULL);
+C(raya_durable_owner_init_v1(&o,&cb)==RAYA_DURABLE_OWNER_OK_V1);C(raya_durable_owner_activate_v1(&o)==RAYA_DURABLE_OWNER_OK_V1);C(raya_durable_owner_admit_v1(&o,&a)==RAYA_DURABLE_OWNER_OK_V1);C(raya_durable_owner_complete_v1(&o,a,RAYA_DURABLE_CALLBACK_UNKNOWN_V1)==RAYA_DURABLE_OWNER_QUARANTINED_RESULT_V1);C(o.state==RAYA_DURABLE_OWNER_QUARANTINED_V1&&o.in_flight==0&&o.unresolved_unknown==1);C(raya_durable_owner_admit_v1(&o,&b)==RAYA_DURABLE_OWNER_QUARANTINED_RESULT_V1);C(raya_durable_owner_begin_close_v1(&o)==RAYA_DURABLE_OWNER_BUSY_V1);C(raya_durable_owner_finish_close_v1(&o)==RAYA_DURABLE_OWNER_QUARANTINED_RESULT_V1);C(raya_durable_owner_reconcile_v1(&o,a,0)==RAYA_DURABLE_OWNER_INVALID_V1);C(raya_durable_owner_reconcile_v1(&o,a,1)==RAYA_DURABLE_OWNER_OK_V1);C(raya_durable_owner_reconcile_v1(&o,a,1)==RAYA_DURABLE_OWNER_INVALID_V1);C(o.state==RAYA_DURABLE_OWNER_CLOSING_V1&&o.unresolved_unknown==0);C(raya_durable_owner_finish_close_v1(&o)==RAYA_DURABLE_OWNER_OK_V1);
+C(raya_durable_owner_init_v1(&o,&cb)==RAYA_DURABLE_OWNER_OK_V1);C(raya_durable_owner_activate_v1(&o)==RAYA_DURABLE_OWNER_OK_V1);C(raya_durable_owner_admit_v1(&o,&a)==RAYA_DURABLE_OWNER_OK_V1);C(raya_durable_owner_complete_v1(&o,a,RAYA_DURABLE_CALLBACK_UNKNOWN_V1)==RAYA_DURABLE_OWNER_QUARANTINED_RESULT_V1);C(raya_durable_owner_reconcile_v1(&o,a,1)==RAYA_DURABLE_OWNER_OK_V1);C(o.state==RAYA_DURABLE_OWNER_ACTIVE_V1);C(raya_durable_owner_begin_close_v1(&o)==RAYA_DURABLE_OWNER_OK_V1);C(raya_durable_owner_finish_close_v1(&o)==RAYA_DURABLE_OWNER_OK_V1);
+C(raya_durable_owner_init_v1(&o,&cb)==RAYA_DURABLE_OWNER_OK_V1);C(raya_durable_owner_activate_v1(&o)==RAYA_DURABLE_OWNER_OK_V1);for(i=0;i<RAYA_DURABLE_OWNER_LEASE_CAPACITY_V1;i++)C(raya_durable_owner_admit_v1(&o,&a)==RAYA_DURABLE_OWNER_OK_V1);C(raya_durable_owner_admit_v1(&o,&a)==RAYA_DURABLE_OWNER_CAPACITY_V1);C(o.in_flight==RAYA_DURABLE_OWNER_LEASE_CAPACITY_V1);
+C(raya_durable_owner_init_v1(&o,&cb)==RAYA_DURABLE_OWNER_OK_V1);
+C(raya_durable_owner_activate_v1(&o)==RAYA_DURABLE_OWNER_OK_V1);
+C(raya_durable_owner_admit_v1(&o,&a)==RAYA_DURABLE_OWNER_OK_V1);
+o.in_flight=2;C(raya_durable_owner_begin_close_v1(&o)==RAYA_DURABLE_OWNER_INVALID_V1);o.in_flight=1;
+o.reserved[0]=1;C(raya_durable_owner_complete_v1(&o,a,RAYA_DURABLE_CALLBACK_KNOWN_V1)==RAYA_DURABLE_OWNER_INVALID_V1);o.reserved[0]=0;
+o.state=RAYA_DURABLE_OWNER_CLOSING_V1;C(raya_durable_owner_begin_close_v1(&o)==RAYA_DURABLE_OWNER_INVALID_V1);o.state=RAYA_DURABLE_OWNER_ACTIVE_V1;
+o.leases[1]=o.leases[0];C(raya_durable_owner_begin_close_v1(&o)==RAYA_DURABLE_OWNER_INVALID_V1);memset(&o.leases[1],0,sizeof(o.leases[1]));
+o.next_lease_id=~(ULONGLONG)0;C(raya_durable_owner_admit_v1(&o,&b)==RAYA_DURABLE_OWNER_CAPACITY_V1&&b==0);
+printf("Raya durable owner v1: %u checks, %u failures\n",n,fail);return fail?1:0;}

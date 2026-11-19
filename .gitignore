@@ -57,3 +57,20 @@ to-iman-hand-off.md
 Thumbs.db
 .vscode/
 .idea/
+# Local Raya admin configuration (copy the example files first)
+raya-config.json
+raya-admin-panel/panel-config.json
+raya-admin-panel/*.backup*
+
+# Broker prototype generated TLC/build artifacts (retain source, models, configs and reports)
+broker-prototype-v2-20261106/states/
+broker-prototype-v2-20261106/*-meta/
+broker-prototype-v2-20261106/**/*.st
+broker-prototype-v2-20261106/**/*.fp
+broker-prototype-v2-20261106/**/*.bin
+broker-prototype-v2-20261106/**/*.dump
+broker-prototype-v2-20261106/**/*.chkpt
+broker-prototype-v2-20261106/**/*.log
+broker-prototype-v2-20261106/**/*TTrace_*.tla
+
+broker-prototype-v2-20261106/PROJECT-ROADMAP.md

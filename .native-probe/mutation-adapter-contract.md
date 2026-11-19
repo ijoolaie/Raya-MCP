@@ -76,3 +76,53 @@ Potential future directions are research items, not accepted solutions: a filesy
 
 This decision does not change Production. edit_block remains path-based and unaccepted against TOCTOU. Phase 1 remains IN PROGRESS / NOT ACCEPTED; Production remains NO-GO; live ACL permission-denied acceptance remains open.
 
+
+
+## Rename ACL acceptance — 2026-11-02
+
+Added .native-probe/handle-relative-rename-acl-test.cjs and npm run test:native-rename-acl. The test applies explicit deny ACEs only to disposable fixture entries for the current user SID and verifies the exact ACEs with icacls:
+- Destination directory FILE_ADD_FILE (WD) deny: renameChildRelative fails with STATUS_ACCESS_DENIED (0xC0000022); source remains at its original name and no destination is created.
+- Source file DELETE (D) deny: source open for the rename fails with STATUS_ACCESS_DENIED; source name remains and no destination is created.
+- After removing only those two fixture deny ACEs, both rename operations succeed and the expected content is present at the destination.
+- Explicit parent HANDLE count returns to baseline; fixture is removed.
+
+Verification on this host: npm run test:native-rename-acl exit 0; npm run test:native-rename-relative exit 0 (15 checks); npm run test:native-rename-worker-stress exit 0 (5 rounds, 20 workers, 120 assertions); npm run lint exit 0; npm test exit 0 (42 core, 34 format/config, HTTP authentication/initialize, 36 URL-security checks).
+
+This is evidence only for the tested native rename prototype, current Windows user SID, and local NTFS fixture. It does not validate all Windows providers/tokens or close the separate unresolved metadata FILE_READ_ATTRIBUTES issue. The strict hard-link policy remains undecided. The rename addon and production move_file handler remain separate; no Production handler was changed or accepted.
+
+
+## Directory rename prototype — 2026-11-02
+
+A separate clone of the file-only rename addon now tests directory moves without changing the original file rename addon: .native-probe/handle-relative-rename-directory-probe.c, built by .native-probe/build-raya-phase1-rename-directory.cmd as a distinct N-API binary. The source leaf is opened relative to the held parent with FILE_OPEN_REPARSE_POINT but without FILE_NON_DIRECTORY_FILE; the opened object is then checked for reparse status and its actual directory bit. The result reports sourceIsDirectory. It supports plain files and directories in this isolated candidate; no Production imports.
+
+The registered test npm run test:native-rename-directories passed 12 checks on local NTFS:
+- Empty directory rename and non-empty nested directory tree move.
+- Existing destination directory and destination file are not overwritten.
+- Directory reparse leaf rejected without following target.
+- Missing and unsafe names fail closed.
+- Destination FILE_ADD_SUBDIRECTORY (AD) deny and source directory DELETE (D) deny both return STATUS_ACCESS_DENIED; both operations succeed after fixture ACE restoration.
+- Held source and destination parent HANDLEs remain bound after their pathnames are replaced by outside junctions.
+- Cross-volume directory move rejected before mutation.
+- Process HANDLE count returns to baseline.
+
+This is a focused functional/ACL/namespace acceptance slice, not a multi-worker directory-rename stress result, not provider portability evidence, and not Production move_file acceptance. The file-only rename addon remains unchanged. Production handlers remain path-based; Phase 1 remains not accepted.
+
+
+## Directory rename multi-process namespace stress — 2026-11-02
+
+Added a separate worker, synchronized race test, and five-round stress runner for the directory-capable candidate:
+- .native-probe/handle-relative-rename-directory-worker.cjs
+- .native-probe/handle-relative-rename-directory-worker-race-test.cjs
+- .native-probe/handle-relative-rename-directory-worker-stress-test.cjs
+- npm run test:native-rename-directory-workers
+
+Each round starts four independent Node workers. Every worker opens and holds both source and destination parent HANDLEs and signals readiness. The controller then renames both parent directories and installs outside junctions at their former paths before releasing the workers. All workers must move their nested directory into the original held destination directory, preserve its canary content, leave both outside sentinels unchanged, avoid publishing into outside paths, and close both parent HANDLE owners.
+
+Results: one round passed with 4 workers / 36 assertions; the five-round stress passed with 20 workers / 180 assertions. This is local NTFS evidence for the isolated directory candidate only; it is not a Production move_file acceptance or provider portability result.
+
+
+## Rename cancellation/lifecycle boundary — 2026-11-02
+
+Added .native-probe/handle-relative-rename-cancellation-test.cjs and npm run test:native-rename-cancellation. The test-only wrapper checks AbortSignal before entering the synchronous native rename. A pre-aborted signal leaves source and destination unchanged. A setImmediate cancellation queued before the synchronous native call cannot run until the call returns; the rename commits and the wrapper preserves the committed result rather than converting it into AbortError. An injected post-commit close/status failure remains reported as committed_but_cleanup_failed even with cancellation queued. Parent HANDLE count returns to baseline.
+
+The test passed 4 checks. This documents the actual Node event-loop boundary for this synchronous prototype; it does not prove mid-kernel cancellation (which is not available here) or MCP/HTTP transport cancellation semantics. Integration must check cancellation before starting, then preserve commit state after the native call. Never claim that an in-flight NtCreateFile/NtSetInformationFile can be force-cancelled.

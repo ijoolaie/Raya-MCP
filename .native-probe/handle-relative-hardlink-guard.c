@@ -315,7 +315,7 @@ static napi_value open_relative(napi_env env, napi_callback_info info) {
     goto cleanup;
   }
 
-  current = open_root_chain(env, root, ntCreateFile, 0, rootCallback, error, sizeof(error));
+  current = open_root_chain(env, root, ntCreateFile, 1, rootCallback, error, sizeof(error));
   if (current == INVALID_HANDLE_VALUE) {
     napi_throw_error(env, NULL, error);
     goto cleanup;

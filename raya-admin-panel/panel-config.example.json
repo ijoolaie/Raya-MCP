@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "allowedRoots": [
+    "C:\\PATH\\TO\\local-mcp-bridge",
+    "C:\\PATH\\TO\\workspace"
+  ],
+  "powershellEnabled": false
+}

@@ -186,3 +186,28 @@ This section supersedes older status statements above where dates/results differ
 - Fresh `npm_lint` on 2026-10-29 08:16 UTC exited 0; `lint` delegates to `node --check` syntax validation only, not comprehensive static analysis.
 - Scope limit: this confirms rejection when the junction exists before path validation, not concurrent replacement (TOCTOU). Source review found separate path-based validation and later filesystem calls; another path check alone cannot make that sequence atomic. A robust Windows fix needs handle/reparse-point-aware operations. No filesystem implementation changed.
 - Native prototype review on 2026-10-29: prior isolated synchronized swap runs are documented in the design note, but the harness is not ready for unattended CI. On 2026-10-29, cleanup was hardened to track/terminate/await both worker processes, explicitly record each worker's `close` event instead of relying on `proc.closed`, verify junction targets before removal, restore renamed fixture directories, and report cleanup failures. `package.json` syntax checks now include both native probe scripts; `npm_lint` passed after the change. On 2026-10-29, the native harness passed normal synchronized descendant and root-chain swaps. Controlled failure-path tests also passed their cleanup expectations: injected assertion failure (expected exit 1), suppressed synchronization signal with 250 ms timeout (expected exit 1), and simulated junction-creation denial (swap skipped after restoring the renamed directory, then root-chain race passed). No new fixture directories remained after these runs; three older fixtures were left untouched because provenance/targets were not fully verified. A subsequent normal harness run exited 0. Fresh `npm_lint` and `npm_test` exited 0 (42 core, 34 format/config, HTTP auth, 36 URL-security checks). This is scoped harness evidence only; production filesystem handlers are unchanged and TOCTOU remains open. Do not promote the harness to unattended CI until broader operation-family tests pass.
+
+
+## HANDLE-relative filesystem acceptance status — 2026-11-02
+
+The upstream parity row move_file remains implemented in the Production bridge but not accepted against concurrent path/reparse races. A separate native rename prototype under .native-probe/handle-relative-rename-probe.c is test-only and has passed:
+- 15 functional/adversarial checks (same/distinct parent, no-overwrite collision, missing/unsafe/reparse source, directory rejection, cross-volume rejection, injected pre/post-commit failure, source/destination parent namespace swaps, HANDLE accounting).
+- Five synchronized worker rounds, 20 workers and 120 assertions against concurrent source/destination path replacement by outside junctions.
+- Live disposable-fixture ACL checks for source DELETE and destination FILE_ADD_FILE denial; both operations return STATUS_ACCESS_DENIED and succeed after fixture ACL restoration.
+
+This does not change the Production move_file status to verified. Existing-file atomic edit remains unsupported/fail-closed in the test-only mutation contract. Metadata FILE_READ_ATTRIBUTES denial remains unresolved; strict hard-link policy is pending user decision; provider portability is untested. Production integration remains NO-GO.
+
+
+## Directory move candidate — 2026-11-02
+
+The Production move_file tool is still not accepted against filesystem races. A separate directory-capable HANDLE-relative native candidate passed 12 local NTFS checks for empty/non-empty directory rename, no-overwrite collision, reparse rejection, source DELETE and destination FILE_ADD_SUBDIRECTORY ACL denial, held-parent namespace swaps, cross-volume rejection and HANDLE cleanup. The test is registered as npm run test:native-rename-directories. Multi-worker directory stress and provider portability are not yet tested; no Production handler has been migrated.
+
+
+## Directory rename worker stress — 2026-11-02
+
+The isolated directory-capable native rename candidate passed five synchronized stress rounds (20 independent workers, 180 assertions) in which both source and destination parent paths were replaced by outside junctions after workers acquired their HANDLEs. Each operation completed in the original held destination directory with nested canary content intact and outside sentinels unchanged. Test command: npm run test:native-rename-directory-workers. This remains local NTFS prototype evidence; Production move_file is unchanged and not accepted.
+
+
+## Native rename cancellation boundary — 2026-11-02
+
+The isolated synchronous rename candidate passed four cancellation-boundary checks via npm run test:native-rename-cancellation. Pre-cancel prevents mutation; cancellation queued on the Node event loop cannot interrupt the synchronous native call; committed results and committed_but_cleanup_failed state are preserved. This does not establish in-kernel cancellation or Production move_file acceptance.

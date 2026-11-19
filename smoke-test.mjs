@@ -17,12 +17,12 @@ try{
  await client.connect(transport);
  const {tools}=await client.listTools();
  const names=new Set(tools.map(t=>t.name));
- const expected=["workspace_roots","workspace_list","file_read","file_write","run_check","powershell_execute","get_config","get_usage_stats","get_recent_tool_calls","create_directory","get_file_info","read_multiple_files","list_directory","move_file","edit_block","start_process","read_process_output","interact_with_process","list_sessions","force_terminate","list_processes","kill_process","start_search","get_more_search_results","list_searches","stop_search","get_prompts","read_file_tail"];
+ const expected=["workspace_roots","workspace_list","file_read","file_read_chunk","file_write","file_write_chunk","run_check","powershell_execute","get_config","get_usage_stats","get_recent_tool_calls","create_directory","get_file_info","read_multiple_files","list_directory","move_file","edit_block","start_process","read_process_output","interact_with_process","list_sessions","force_terminate","list_processes","kill_process","start_search","get_more_search_results","list_searches","stop_search","get_prompts","read_file_tail"];
  check("tool inventory",expected.every(n=>names.has(n)),[...names]);
  const roots=await call("workspace_roots");
  check("workspace roots",Array.isArray(roots)&&roots.length>0,roots);
  const config=await call("get_config");
- check("config limits",config.settings?.maxSessions>=1&&config.security?.shellIsSandboxed===false,config);
+ check("config limits",config.settings?.maxSessions===32&&config.security?.shellIsSandboxed===false,config);
  let blocked=false;try{await call("file_read",{path:"C:\\Windows\\win.ini"})}catch{blocked=true}
  check("outside-root blocked",blocked);
  await call("create_directory",{path:dir,recursive:true});
@@ -71,6 +71,19 @@ try{
  await call("file_write",{path:file,content:"alpha\nbeta\nalpha\n"});
  let overwriteBlocked=false;try{await call("file_write",{path:file,content:"bad"})}catch{overwriteBlocked=true}
  check("overwrite protected",overwriteBlocked);
+ const chunkFile=path.join(dir,"chunk-upload.txt");
+ const chunkText="A".repeat(190000)+"پایان-فایل-رایا";
+ const chunkBytes=Buffer.byteLength(chunkText,"utf8");
+ const uploadId="00000000-0000-4000-8000-000000000001";
+ const firstChunk=chunkText.slice(0,190000);
+ const firstUpload=await call("file_write_chunk",{path:chunkFile,uploadId,content:firstChunk,offsetBytes:0,totalBytes:chunkBytes});
+ const secondUpload=await call("file_write_chunk",{path:chunkFile,uploadId,content:chunkText.slice(190000),offsetBytes:190000,totalBytes:chunkBytes});
+ check("chunked atomic file upload",firstUpload.complete===false&&secondUpload.complete===true&&await fs.readFile(chunkFile,"utf8")===chunkText,secondUpload);
+ const chunkRead=await call("file_read_chunk",{path:chunkFile,offsetBytes:190000,maxBytes:256});
+ check("bounded chunked file read",chunkRead.done===true&&Buffer.from(chunkRead.contentBase64,"base64").toString("utf8")==="پایان-فایل-رایا",chunkRead);
+ let utf8OversizeBlocked=false;
+ try { await call("file_write",{path:path.join(dir,"utf8-too-large.txt"),content:"😀".repeat(70000)}); } catch { utf8OversizeBlocked=true; }
+ check("UTF-8 byte limit enforced",utf8OversizeBlocked);
  const raceFile=path.join(dir,"concurrent-create.txt");
  const raceResults=await Promise.allSettled([
   call("file_write",{path:raceFile,content:"writer-A"}),
@@ -112,6 +125,9 @@ try{
  check("process starts",Boolean(proc.sessionId)&&Boolean(proc.pid),proc);
  const output=await call("read_process_output",{sessionId:proc.sessionId,maxChars:2000});
  check("process output",output.stdout.includes("raya-process-ok")&&output.status!=="running",output);
+ const overflowProc=await call("start_process",{executable:process.execPath,args:["-e","process.stdout.write('X'.repeat(180000))"],cwd:here,initialWaitMs:500});
+ const overflowOut=await call("read_process_output",{sessionId:overflowProc.sessionId,stdoutOffset:0,maxChars:1000});
+ check("process output ring offsets remain absolute",overflowOut.stdoutBaseOffset>0&&overflowOut.stdoutDroppedBefore===overflowOut.stdoutBaseOffset&&overflowOut.stdoutNextOffset>overflowOut.stdoutBaseOffset,overflowOut);
  const sessions=await call("list_sessions",{includeFinished:true});
  check("session listing",sessions.some(s=>s.sessionId===proc.sessionId),sessions);
  const echoProc=await call("start_process",{executable:process.execPath,args:["-e","process.stdin.on('data',d=>{process.stdout.write('echo:'+d.toString());process.exit(0)})"],cwd:here,initialWaitMs:100});

@@ -1,0 +1,6 @@
+{
+  "maxSessions": 32,
+  "maxSearches": 8,
+  "searchMaxResults": 500,
+  "searchMaxDepth": 8
+}

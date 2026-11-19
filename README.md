@@ -1,17 +1,17 @@
-﻿# Raya Local MCP Bridge
+# Raya Local MCP Bridge
 
 Windows-first MCP server for local development workspaces, exposed through stdio and an optional authenticated Streamable HTTP endpoint.
 
-## Current implementation status (2026-11-01)
+## Current implementation status (2026-11-05)
 - Core process/session, filesystem, search, configuration, diagnostics, URL retrieval, and PDF/DOCX/XLSX tools are implemented.
 - GitHub repository: https://github.com/ijoolaie/Raya-MCP (Private), default branch `main`; local source was first committed and pushed on 2026-11-01. Preserve any uncommitted local changes.
 - PowerShell execution is gated by MCP_ENABLE_POWERSHELL=true and runs with the server user's Windows permissions. It is not a sandbox.
-- Local server verification: JSON-RPC `tools/list` and the current test inventory report 45 tools; `npm run lint` passed (Node syntax checks); latest `npm test` passed (42 core checks, 34 format/config checks, HTTP unauthorized 401 and authenticated initialize 200, 36 URL-security checks). These tests do not individually acceptance-test every tool.
+- Local server verification (2026-11-05): the test inventory reports 47 tools; `npm run lint` passed (Node syntax checks); latest `npm test` passed (46 core checks, 34 format/config checks, HTTP unauthorized 401 and authenticated initialize 200, 36 URL-security checks). These tests do not individually acceptance-test every tool.
 - ChatGPT connector verification (2026-10-25): the connected catalog exposes 45 tools and live calls confirmed advanced filesystem, process, search, DOCX/XLSX/PDF, and URL tools are callable. This verifies availability and selected real operations, not exhaustive edge-case acceptance of every tool.
 
 ## Tool families
 - Workspace: workspace_roots, workspace_list
-- Files: file_read, file_write, read_multiple_files, read_file_tail, get_file_info, create_directory, list_directory, move_file, edit_block
+- Files: file_read, file_read_chunk, file_write, file_write_chunk, read_multiple_files, read_file_tail, get_file_info, create_directory, list_directory, move_file, edit_block
 - Process/session: run_check, powershell_execute, start_process, read_process_output, interact_with_process, list_sessions, force_terminate, list_processes, kill_process
 - Search: start_search, get_more_search_results, list_searches, stop_search
 - Settings/diagnostics: get_config, set_config_value, get_usage_stats, get_recent_tool_calls, get_prompts, give_feedback_to_desktop_commander
@@ -31,6 +31,8 @@ Dependency security update (2026-10-26): pinned @modelcontextprotocol/sdk 1.32.2
 ## Safety
 - File operations validate configured-root boundaries and reject tested traversal/static symlink or reparse-point escapes; size abuse and accidental overwrites are guarded. Race-free TOCTOU confinement is not proven: a concurrently writable ancestor could theoretically change between validation and a path-based filesystem operation. Keep workspace roots and their parent chain writable only by trusted principals; see docs/WINDOWS-FILESYSTEM-TOCTOU-DESIGN.md.
 - Shell and PowerShell execution are privileged, not sandboxed.
+- Managed processes: up to 64 concurrent sessions; completed sessions expire after 1 hour; stdout/stderr retain the latest 128 KiB with absolute offsets and explicit dropped-before markers; timeout and explicit termination use Windows `taskkill /T /F` to target the process tree. Child processes receive a restricted environment-variable allowlist rather than the full server environment. These controls improve lifecycle management but do not create a Windows Job Object or a security sandbox.
+- File transfers: use `file_read_chunk` for bounded Base64 byte ranges and `file_write_chunk` for ordered uploads up to 32 MiB; chunk upload publishes a new target only after the final chunk. Existing targets are not overwritten. The ordinary `file_write` also enforces the 256 KiB limit in UTF-8 bytes, not JavaScript character count.
 - Process termination should use managed session IDs; OS PID termination additionally requires expected process name and explicit confirmation.
 - Never log or persist API keys, bearer tokens, cookies, or environment secrets.
 - HTTP mode binds to localhost by default and requires a bearer token of at least 32 characters. Do not expose it directly to the internet.
@@ -78,3 +80,38 @@ A redacted support export of the most recent 10 minutes showed successful initia
 - Live XLSX workbook/range/search reads passed against the controlled fixture. Live DOCX create/read/search/exact replacement/readback passed using a new fixture. Live PDF create/merge/info/text-overlay/extraction passed using controlled fixtures; these tests created or modified only new files under `raya-tool-test-temp`.
 - Three stale search sessions were stopped and confirmed removed.
 - The intermittent `MCP server is not initialized` error reproduced on a batched format call; sequential recovery and individual calls succeeded. In the 2026-10-26 follow-up, eight sequential `get_config` calls succeeded and `npm test`/`npm run lint` passed. Root cause remains unconfirmed; evidence points to an intermittent connector lifecycle/concurrency issue, not a proven bridge process crash. Existing logs contain an older duplicate-listener `EADDRINUSE` on diagnostic port 18767; do not assume that explains the current connector error. No tunnel restart, root/config change, or IranPriceScout tunnel change was made. The stdio launcher was also corrected to stop explicitly setting `MCP_ENABLE_POWERSHELL=true`, preserving disabled-by-default PowerShell.
+
+
+## Native filesystem security prototypes — status 2026-11-02
+
+HANDLE-relative read, create, rename, and atomic create-if-absent publication work is currently isolated under .native-probe/. These are research/acceptance prototypes, not the Production filesystem handlers. The rename prototype has passed 15 functional/adversarial checks, 20-worker synchronized path-swap stress (120 assertions), and a live ACL test proving the tested source DELETE and destination FILE_ADD_FILE denials are enforced on the current local NTFS host. npm run test:native-rename-acl runs the ACL acceptance test.
+
+Production move_file, edit_block, create_directory, and other filesystem handlers have not been migrated to these prototypes. Metadata FILE_READ_ATTRIBUTES ACL behavior remains unresolved; strict hard-link rejection policy remains pending a user decision; filesystem-provider portability is not established. Phase 1 is not accepted and Production use remains NO-GO. See docs/CURRENT-STATUS.md, docs/PROJECT-ROADMAP.md, and .native-probe/mutation-adapter-contract.md.
+
+
+## Directory rename research candidate — 2026-11-02
+
+A separate test-only directory-capable HANDLE-relative rename addon has been added under .native-probe/. Its local NTFS harness passed 12 functional, ACL and namespace checks, including non-empty directory trees and source/destination parent path swaps. Run npm run test:native-rename-directories. This is not integrated into Production move_file; multi-worker directory stress and provider portability are still open. Phase 1 remains not accepted.
+
+
+## Directory rename stress verification — 2026-11-02
+
+The isolated directory-rename candidate also passed synchronized multi-process path-swap stress: five rounds, 20 independent workers, 180 assertions. Run npm run test:native-rename-directory-workers. This verifies held source/destination parent HANDLE behavior against concurrent path-to-outside-junction replacement on the current local NTFS host only. It does not accept Production move_file or establish provider portability.
+
+
+## Native rename cancellation boundary — 2026-11-02
+
+The isolated synchronous rename candidate has a cancellation-boundary test: npm run test:native-rename-cancellation. It verifies pre-cancel prevents mutation and that a queued cancellation cannot interrupt a synchronous native syscall or rewrite a completed commit as cancelled. This is not force-cancellation of a running kernel operation and is not Production integration.
+
+## Raya MCP Admin Panel — 2026-11-05
+- Added `raya-admin-panel/` as a separate local-only management UI. It supports tunnel start/stop/restart (only for a tunnel child launched by the panel), allowlisted workspace root add/remove, maxSessions/maxSearches/searchMaxResults/searchMaxDepth, and PowerShell enablement.
+- Panel binds only to 127.0.0.1:8766; uses a fresh in-memory 256-bit bearer token, requires the tokenized session URL to serve the dashboard, rejects unauthenticated API calls and unexpected Host/Origin values, and does not persist or display CONTROL_PLANE_API_KEY.
+- Added `start-raya-admin-panel.ps1`, `start-mcp-stdio-panel.cmd`, and `raya-admin-panel/stdio-launcher.mjs`. The tunnel profile `raya-local` now points its stdio command to the panel-aware launcher. Backup: `raya-local.yaml.backup-panel-20261105`.
+- The panel-aware stdio launcher reads `raya-admin-panel/panel-config.json`, validates local existing non-reparse workspace roots, requires the local-mcp-bridge root, rejects drive roots/duplicates/nested roots/system folders, then sets MCP_ALLOWED_ROOTS and the PowerShell gate for server.mjs.
+- Initial panel config mirrors the 19 current roots. Six are stale/missing and are retained for user review; the panel warns and blocks server start until those are removed or the intended folders are restored. No existing workspace or root directory was created/deleted.
+- Verification: panel source and embedded UI script syntax checks passed; panel smoke test passed 9 checks (token-gated dashboard, unauthenticated API blocked, authenticated status, drive-root rejection, rejected config leaves file unchanged); `npm run lint` and `npm test` both passed (46 core, 34 format/config, HTTP auth/initialize, 36 URL-security). Panel-aware stdio launcher was started against a temporary test config with 13 existing roots, spawned `server.mjs`, and was terminated; original 19-root panel config was restored.
+- Live handoff remains pending: the current tunnel was not stopped or restarted. `tunnel-client doctor` loaded the updated profile but its control-plane key check failed in the MCP tool process because CONTROL_PLANE_API_KEY is not inherited into that separate process environment. Start the panel from the original PowerShell session that has the key after Ctrl+C-stopping the current tunnel. Do not touch IranPriceScout or port 8765.
+- This is a local admin-panel prototype, not a Windows service or a production security boundary. Production filesystem confinement remains NOT ACCEPTED; no commits or PRs were created.
+## Native broker prototype (separate, non-production component)
+
+The `broker-prototype-v2-20261106/` directory contains the native Windows broker prototype, bounded TLA+ models/configurations, build scripts, and validation reports. It is maintained as a separate component; it is not the Production filesystem handler implementation. Stage 5 has completed its review/reporting and the read-only retained-inventory implementation, but acceptance remains blocked: no safe reconciliation action is approved, retained resources remain fail-closed quarantined, Phase 1 is NOT ACCEPTED, and Production is NO-GO. See `broker-prototype-v2-20261106/validation/` for the evidence reports. Do not treat bounded model results as a full Raft proof.

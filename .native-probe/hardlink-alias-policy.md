@@ -43,3 +43,12 @@ This is promising evidence for a conservative single-link policy on the tested N
 - The experimental adapter covers `readChildFromParent`, `inspectChildFromParent` and `openRelative` only. Directory metadata enumeration, other read adapters, rename/move, write/publish, recursive create and all Production handlers require separate review.
 
 **Status:** experimental candidate only. Do not merge into Production or mark Phase 1 accepted. Keep the original outside-root escape and live ACL-denial gates open. The existing uncommitted `.native-probe/hardlink-sharing-experiment.c` was not touched.
+
+
+## 2026-11-02 — user-approved strict hard-link policy
+
+The user explicitly approved the conservative single-link policy for Raya MCP: every regular file admitted to a confined file operation must have `FILE_STANDARD_INFO.NumberOfLinks == 1`; if the count is unavailable, inconsistent, or greater than one, the operation must fail closed. This intentionally rejects legitimate in-workspace hard links as well as outside-backed aliases. Do not silently fall back to path-based handling or weaken the rule for compatibility.
+
+This is a policy decision, not Production acceptance. The current isolated hard-link-guard candidate enforces the check only in `readChildFromParent`, `inspectChildFromParent`, and `openRelative`; all other file-operation families (including rename/move, metadata/list/search adapters, write/publish and any future mutation path) still require explicit applicability review and adversarial tests. The check must be performed against the opened file HANDLE, not a separately resolved pathname. Revalidate at the operation's commit/read boundary where concurrent link creation is possible; sharing flags alone are not a hard-link defense.
+
+The 2026-11-02 Medium-integrity RA/RD matrix independently confirms content READ_DATA denial for the tested read adapter, while metadata inspection still succeeds despite an explicit READ_ATTRIBUTES deny. Metadata authorization remains FAIL / UNRESOLVED and is not waived by this hard-link decision. Provider coverage remains local NTFS only. Phase 1 remains NOT ACCEPTED; Production remains NO-GO.

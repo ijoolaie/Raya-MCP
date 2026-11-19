@@ -1,9 +1,13 @@
 # Project Roadmap — Raya Local MCP Bridge
 
-Last updated: 2026-10-30
+Last updated: 2026-11-05
 Authority: this file is the phase sequence; CURRENT-STATUS.md is the live snapshot; HANDOFF.md is the chronological transfer record.
 
 ## Mission
+Deliver a reliable, secure, useful Windows local MCP bridge with practical Desktop Commander-like outcomes, while enabling a separate Raya Agent product.
+
+## Product architecture decision — 2026-11-05
+Raya MCP remains an independent product and repository. Raya Agent will be a separate product/repository, initially bootstrapped from a reviewed import of the applicable Raya MCP codebase. Raya MCP remains independently usable; Raya Agent owns agent planning, orchestration, approvals, context and UX, and consumes Raya MCP through a versioned public MCP contract. Do not blindly copy the dirty working tree: first create a read-only source inventory/import manifest and exclude credentials, local tunnel profiles, machine-specific configuration, generated artifacts and unreviewed disposable prototypes. Full decision: `docs/ARCHITECTURE-DECISION-RAYA-MCP-AND-AGENT-20261105.md`.
 Deliver a reliable, secure, useful Windows local MCP bridge with practical Desktop Commander-like outcomes. Preserve least privilege, compatibility, bounded operations, lifecycle cleanup, and truthful security claims.
 
 ## Execution policy (binding)
@@ -23,7 +27,7 @@ Deliver a reliable, secure, useful Windows local MCP bridge with practical Deskt
 | Phase | Scope | Exit deliverable / gate | Current status |
 |---|---|---|---|
 | 0. Baseline and architecture | Inventory, threat model, allowed roots, tool map, docs and acceptance policy | Reproducible baseline and approved roadmap | Implemented; ongoing doc maintenance |
-| 1. Filesystem confinement | Windows handle-relative primitives; parent-handle ownership; race-resistant operation semantics | Comprehensive operation-family race/escape/cleanup evidence; production claims only for accepted operations | In progress; NOT ACCEPTED as race-free |
+| 1. Filesystem confinement | Windows handle-relative primitives; parent-handle ownership; race-resistant operation semantics | Comprehensive operation-family race/escape/cleanup evidence; production claims only for accepted operations | In progress; NOT ACCEPTED as race-free; LocalSystem identity-negative broker test passed 2026-11-06; v2 staged specification recorded; no Production integration |
 | 2. Safe filesystem operations | Read/write/edit/create/list/search/metadata/move and multi-file operations | Per-operation security and regression acceptance; no path-based unsafe fallback | Planned |
 | 3. Process and command lifecycle | Launch, sessions, output, timeout, cancellation, safe termination, working directory | Controlled process lifecycle, permission and leak tests | Planned |
 | 4. Developer/workspace capabilities | Workspace discovery, project operations, Git and test workflows, diagnostics | End-to-end workflows with bounded outputs and compatibility tests | Planned |
@@ -283,3 +287,121 @@ This is live DACL evidence, not a mocked error. No global/user-profile ACLs or P
 
 Updated next action: continue remaining read/metadata and mutation operation-family acceptance, complete hard-link alias policy review, and broaden provider/ACL coverage. Phase 1 remains IN PROGRESS / NOT ACCEPTED; Production remains NO-GO until the complete acceptance gate is met.
 
+## Read/metadata and ACL follow-up — 2026-11-01
+
+Re-ran `handle-relative-read-family-test.cjs` (exit 0; 4 outcomes) and `handle-relative-readonly-adapter-test.cjs` (exit 0; 10 checks), covering synchronized in-root tail/multi-read insertion, outside junction rejection, root/file/directory metadata mapping, UTF-8/size limits, and HANDLE cleanup. `npm run lint` and `npm test` both exited 0 (42 core, 34 format/config, HTTP auth 401/200, 36 URL-security checks).
+
+A separate disposable-file live ACL probe applied an explicit current-SID `icacls` `(DENY)(RA)` ACE; `icacls` showed the deny entry, but `inspectChildFromParent` still succeeded while requesting `FILE_READ_ATTRIBUTES`. The temporary ACE was removed and fixture deleted. This metadata ACL case is UNRESOLVED / NOT ACCEPTED; the exploratory test was not retained in the harness. The existing live DACL results remain limited to file create, directory create and content read. See `.native-probe/acl-denial-acceptance.md`.
+
+No Production handlers, native Production source, configured ROOTS, dependencies, runtime settings, services, tunnels or unrelated workspaces were changed. The pre-existing user modification `.native-probe/hardlink-sharing-experiment.c` remains untouched. Phase 1 remains IN PROGRESS / NOT ACCEPTED; Production remains NO-GO. Next: determine why the RA deny does not block metadata open, build an independently observable metadata ACL test, then continue operation-family/provider acceptance. Hard-link policy remains awaiting user decision.
+
+## Direct Win32 metadata-open cross-check — 2026-11-01 (unresolved)
+
+To determine whether the prior RA result was specific to the pinned NtCreateFile adapter, a temporary standalone N-API probe called Win32 `CreateFileW` directly with `dwDesiredAccess = FILE_READ_ATTRIBUTES` only (0x80), all share flags, `OPEN_EXISTING`, and `FILE_FLAG_OPEN_REPARSE_POINT`. Before applying a deny ACE, the open succeeded as expected. After applying `icacls /deny` first to the exact current TokenUser SID and then in a separate fixture to `Everyone` (`S-1-1-0`), the open still succeeded. The same ACLs were independently enumerated from the file DACL: the explicit deny ACE was present with mask `0x00000080`, and its SID matched the process TokenUser SID in the user-SID case. `inspectChildFromParent` also continued to succeed. `SeBackupPrivilege` was reported disabled; the process token had the Administrators group enabled. Both deny ACEs were removed from their disposable fixtures, which were then deleted.
+
+This shows the observation is not limited to the prototype's `NtCreateFile` path: on this host, the tested Win32 `CreateFileW(FILE_READ_ATTRIBUTES)` open also succeeded despite the observed explicit RA deny ACE. It does NOT establish that Windows universally ignores RA denies. The current token is elevated and includes Administrators; the cause remains unresolved. A separate `AccessCheck` diagnostic was inconclusive because the helper returned error 1338 (invalid security descriptor), so it is not evidence either way. Do not mark metadata ACL denial as passed or generalize this result to other tokens/providers. Next: reproduce under a non-elevated standard-user token (without changing account or global permissions unless explicitly approved), and validate the security-descriptor/access-check helper independently before drawing a Windows ACL conclusion. Temporary probe sources/build outputs were removed; no new test harness or Production source was retained.
+
+
+
+## 2026-11-02 — isolated openRelative root-chain pinning correction
+
+The configured-root namespace race was reproduced in the isolated hard-link-guard candidate: `openRelative` passed `pinNamespace=0` to `open_root_chain`, allowing a synchronized root rename and junction replacement. The candidate now passes `pinNamespace=1`. A separately named MSVC x64 addon was built; a focused regression confirmed root rename is blocked (`EBUSY`), the original content is returned, and no junction is installed. The cross-process hard-link guard suite also passed against the rebuilt candidate, with HANDLE accounting returning to baseline. `npm run lint` and `npm test` pass (42 core, 34 format/config, HTTP auth/initialize, 36 URL-security).
+
+This remains test-only. It does not resolve the pending strict-single-link policy decision, establish provider portability, or authorize Production integration. The extensive FILE_READ_ATTRIBUTES diagnostics remain a bounded unresolved ACL issue; do not repeat exploratory Windows/filter-driver tests without a specific falsifiable hypothesis. Phase 1 remains NOT ACCEPTED; Production remains NO-GO.
+
+
+## 2026-11-02 — rename operation ACL gate
+
+The isolated HANDLE-relative rename primitive now has a live disposable-fixture ACL acceptance harness. Explicit current-user SID DENY(WD) on the destination directory blocks the rename at NtSetInformationFile with STATUS_ACCESS_DENIED; explicit DENY(D) on the source file blocks the source open with the same status. Both operations succeed after only the corresponding fixture ACE is removed. Source/destination preservation and HANDLE baseline are checked. Registered as npm run test:native-rename-acl.
+
+Fresh tests: rename base 15 checks; rename worker stress 5 rounds / 20 workers / 120 assertions; ACL acceptance; npm run lint; npm test all exit 0. Evidence is limited to the isolated addon, current host, current user SID and local NTFS. It does not accept Production move_file, close metadata RA denial, resolve strict hard-link policy, or establish other-provider behavior. Next: review remaining operation-family gaps (notably directory rename semantics and multi-link policy interactions) before any migration decision. Keep production path handlers unchanged.
+
+
+## 2026-11-02 — directory rename candidate added
+
+A distinct test-only directory-capable rename addon and harness are now present. It passed 12 local NTFS checks covering empty/non-empty directories, no-overwrite collisions against files/directories, reparse rejection, invalid/missing leaves, live source DELETE and destination FILE_ADD_SUBDIRECTORY denial, ACL restoration, held-parent namespace swaps, cross-volume rejection and HANDLE accounting. It is separate from the original file-only rename addon. npm run lint and npm test pass after registering its syntax check.
+
+Remaining gates: directory rename worker stress; multi-link policy decision for files; metadata FILE_READ_ATTRIBUTES unresolved; provider portability; full operation-family acceptance. Do not change Production move_file until these gates and explicit policy decisions are complete. Next: add synchronized multi-process directory-rename namespace stress, then audit hard-link and cancellation semantics.
+
+
+## 2026-11-02 — directory rename worker stress completed
+
+The directory-capable test-only rename candidate now has synchronized cross-process namespace-swap stress. Five rounds × four independent workers passed (20 workers, 180 assertions). Each worker held source and destination parent HANDLEs before both directory names were replaced with outside junctions; every rename landed in the original held destination directory, nested canary bytes were preserved, outside sentinels were unchanged, and worker HANDLE owners closed. Registered as npm run test:native-rename-directory-workers and included in syntax checks.
+
+This closes the directory-candidate worker-stress item for the current local NTFS host, not provider portability or Production acceptance. Next: review hard-link policy interactions for file rename and cancellation/lifecycle guarantees for the mutation adapter. Keep Production handlers unchanged; unresolved metadata RA remains a separate gate.
+
+
+## 2026-11-02 — rename cancellation boundary characterized
+
+The isolated synchronous native rename now has a cancellation-boundary test (npm run test:native-rename-cancellation; 4 checks). A pre-aborted signal prevents mutation. Cancellation queued on the Node event loop cannot interrupt the synchronous native call; a completed commit must remain reported as committed. Post-commit cleanup failure must remain distinguishable. HANDLE accounting returns to baseline.
+
+This is not mid-kernel cancellation and does not replace MCP/HTTP transport cancellation tests. Future integration must check cancellation before the syscall and preserve commit state after it returns. Next: consolidate operation-family acceptance and resolve the hard-link policy decision before considering Production migration.
+
+
+## 2026-11-02 — user-approved strict hard-link policy
+
+The user explicitly approved the conservative single-link policy for Raya MCP: every regular file admitted to a confined file operation must have `FILE_STANDARD_INFO.NumberOfLinks == 1`; if the count is unavailable, inconsistent, or greater than one, the operation must fail closed. This intentionally rejects legitimate in-workspace hard links as well as outside-backed aliases. Do not silently fall back to path-based handling or weaken the rule for compatibility.
+
+This is a policy decision, not Production acceptance. The current isolated hard-link-guard candidate enforces the check only in `readChildFromParent`, `inspectChildFromParent`, and `openRelative`; all other file-operation families (including rename/move, metadata/list/search adapters, write/publish and any future mutation path) still require explicit applicability review and adversarial tests. The check must be performed against the opened file HANDLE, not a separately resolved pathname. Revalidate at the operation's commit/read boundary where concurrent link creation is possible; sharing flags alone are not a hard-link defense.
+
+The 2026-11-02 Medium-integrity RA/RD matrix independently confirms content READ_DATA denial for the tested read adapter, while metadata inspection still succeeds despite an explicit READ_ATTRIBUTES deny. Metadata authorization remains FAIL / UNRESOLVED and is not waived by this hard-link decision. Provider coverage remains local NTFS only. Phase 1 remains NOT ACCEPTED; Production remains NO-GO.
+
+
+Next execution slice: propagate and verify the approved single-link rule across every regular-file operation adapter in isolated candidates only. Start with a source-to-handler inventory and operation matrix; include before/after synchronization checks where link-count races are possible, failure/cleanup and HANDLE accounting, then rerun the focused adversarial suites. Do not modify Production handlers until every applicable operation and independent review gate passes.
+
+
+## 2026-11-02 — strict hard-link policy applied to isolated rename characterization
+
+Created a separately named file-only rename candidate and harness: .native-probe/handle-relative-rename-hardlink-probe.c, build-raya-phase1-rename-hardlink.cmd, and handle-relative-rename-hardlink-test.cjs. The candidate opens with FILE_SHARE_READ, rejects pre-existing regular files whose NumberOfLinks is not 1, and rechecks the same HANDLE immediately before rename. MSVC x64 build exited 0. The 18-check local NTFS harness exited 0 and covered pre-existing multi-link rejection, insertion after initial validation detected by recheck, normal rename/no-overwrite behavior, reparse and cross-volume rejection, failure/commit reporting, and HANDLE baseline.
+
+**The harness also deliberately reproduced a critical residual race:** a hard link inserted after the final NumberOfLinks query but before NtSetInformationFile caused the rename to commit a multi-link file. Thus FILE_SHARE_READ plus pre-commit recheck is insufficient; regular-file rename remains NOT ACCEPTED. This is a characterization failure, not an accepted security fix. The test-only API includes synchronization hooks solely to make both race windows deterministic.
+
+Registered the new harness as test:native-rename-hardlink and added its syntax check to npm run check. No Production handler or native Production source was changed. See .native-probe/hardlink-operation-family-audit-20261102.md. The existing strict policy remains approved, but cannot be considered enforced for rename until link creation is excluded across the commit boundary. Metadata RA denial remains unresolved; provider portability remains untested; Phase 1 NOT ACCEPTED; Production NO-GO.
+
+## 2026-11-02 — hard-link share-mode contradiction and ACL boundary
+
+A fresh five-case cross-process native reproducer on the local NTFS volume confirmed that CreateHardLinkW succeeded while another process held the source with share mode 0 in all tested access modes (GENERIC_READ; FILE_READ_ATTRIBUTES|SYNCHRONIZE; FILE_READ_DATA|SYNCHRONIZE), and also with FILE_SHARE_READ and full sharing. The held handle's link count changed 1→2 in every case. This contradicts the CreateHardLinkW documentation statement about non-sharing handles; the empirical local NTFS result is repeatable. Do not rely on share modes to exclude hard-link creation.
+
+A disposable-fixture DACL experiment found that DENY FILE_WRITE_ATTRIBUTES to the current user blocked CreateHardLinkW (Win32 error 5). However, a same-identity child could replace the fixture DACL with a NULL DACL and then create the link; the parent restored the original DACL and cleaned up. The same token could open WRITE_DAC. Therefore a simple per-file deny ACE is not a durable same-owner boundary. No workspace ACLs or ownership were changed.
+
+A service identity with protected ownership/DACLs could be investigated as a separate architecture, but would change file ownership/access semantics and needs explicit approval. For the current same-user model, share-mode pinning and a simple DACL deny do not prove exclusion across the commit boundary. Regular-file rename remains NOT ACCEPTED; strict HANDLE-based NumberOfLinks admission checks remain required. Detailed commands/results and the Microsoft documentation conflict are in .native-probe/hardlink-operation-family-audit-20261102.md. Metadata READ_ATTRIBUTES denial remains unresolved; provider portability remains untested; Phase 1 NOT ACCEPTED; Production NO-GO.
+
+## 2026-11-02 — publish/read-tail/metadata/enumeration hard-link gaps
+
+Built isolated publish-hardlink addon and harness. MSVC x64 build exit 0; 10 checks exit 0. The test opens a staging file with ShareAccess=0, creates an outside hard link while the staging HANDLE remains open, and proves the candidate still publishes the file with NumberOfLinks=2. Atomic create-if-absent publication is therefore NOT ACCEPTED under the strict policy.
+
+A separate rootapi characterization harness (exit 0) created an outside-backed alias inside a disposable workspace. The isolated rootapi candidate's readChildFromParent and readTailChildFromParent returned the outside-backed bytes; inspectEntryMetadata returned numberOfLinks=2 without rejecting; enumerateDirectoryPage returned the alias as a normal file entry without a link count. This rootapi candidate does not enforce the approved policy for these operations. The hardlink-guard candidate covers only its distinct readChildFromParent, inspectChildFromParent and openRelative APIs; read-tail, directory enumeration and publish remain uncovered or incomplete.
+
+Added test-only package scripts and syntax checks for the new characterization harnesses. No Production handlers, workspace ACLs, file ownership, runtime configuration, ROOTS, services or tunnels were changed. See .native-probe/hardlink-operation-family-audit-20261102.md. Next: build separate guarded read-tail/metadata/enumeration/publish candidates and adversarial tests; decide separately whether a service identity architecture is acceptable. Phase 1 NOT ACCEPTED; Production NO-GO.
+
+## 2026-11-03 — isolated dedicated-identity named-pipe prototype
+
+Implemented a separate test-only Windows service candidate under `.native-probe/broker-prototype-20261103/`. It uses a dedicated virtual service account and protected disposable fixture; the local named pipe has a restricted DACL, rejects remote clients, and validates the actual client TokenUser SID and TokenSessionId. The protocol is versioned and exposes only `READ fixture`; no caller-supplied filesystem path is accepted. The service checks regular-file type, reparse status, single-link count, and a 4096-byte read cap.
+
+Evidence: final MSVC x64 build exit 0 without warnings; service reached RUNNING; Win32 client passed 3/3 protocol checks (fixed-root read/content integrity, unknown-root denial, unsupported-operation denial). Service stop/delete and fixture/image cleanup succeeded; `sc query` returned 1060 after deletion.
+
+Important gap: Node.js `net.createConnection` fails with EPIPE against the broker and an independent minimal Win32 byte-mode echo pipe; the underlying cause remains unresolved. A test-only native Win32 console adapter successfully bridged Node `child_process` stdio to Win32 named pipes in both byte and message modes, but it has not yet been adapted to the broker's split header/payload protocol or tested against the broker service. No Raya MCP transport integration is claimed. See `.native-probe/broker-prototype-20261103/RESULTS-20261103.md`. Negative tests with another user/session, remote clients, pipe ACL denials, fuzzing, slow clients, concurrency, crash recovery, and full operation families are not complete.
+
+The disposable service was removed. No Production service, workspace ACL/owner, configured root, runtime setting, Production handler, dependency, or tunnel changed. The separate IranPriceScout tunnel was not touched. This prototype does not close the Phase 1 hard-link operation-family gaps. Phase 1 remains NOT ACCEPTED; Production remains NO-GO.
+
+Supplemental handoff: `.native-probe/broker-prototype-20261103/HANDOFF-20261103.md`. The main `HANDOFF.md` append was blocked because its existing 261,868-byte size exceeds the connector's 256 KiB edit limit; its pre-existing contents were preserved.
+
+## 2026-11-05 — execution plan and post-restart baseline
+
+Detailed next-stage plan: `docs/RAYA-EXECUTION-PLAN-20261105.md`. The binding phase sequence is unchanged: Phase 1 filesystem confinement must be accepted before Phase 2 safe filesystem integration or later product capabilities proceed.
+
+Post-restart evidence: 25/25 sequential low-risk MCP requests succeeded; local health endpoints returned HTTP 200 and MCP reported initialized/running. The health observer's `tools_list.ok=false` means no forwarded tool-discovery exchange was retained; the current local smoke test enumerates 47 tool definitions. No tunnel restart is warranted solely to change this observer field.
+
+Repository validation: `npm_lint` exit 0. Initial `npm_test` exposed a stale smoke-test assertion expecting maxSessions=64 while the live/on-disk configured value is 32. The assertion was aligned to 32; both `npm_lint` and `npm_test` then exited 0. Test totals: 46 core smoke checks, 34 format/config checks, HTTP auth (401/200), and 36 URL-security checks.
+
+Phase 1 remains IN PROGRESS / NOT ACCEPTED. Production filesystem handlers are still path-based; hard-link commit-boundary exclusion and metadata READ_ATTRIBUTES authorization remain unresolved. The dedicated-identity broker remains an isolated disposable prototype. Next: deterministic pending-response-write disconnect testing and pipe identity/remote/DACL negative tests, with cleanup verification. No Production integration, real workspace ownership/ACL migration, or production service deployment is authorized by this plan.
+
+## Raya MCP Admin Panel — 2026-11-05
+- Added `raya-admin-panel/` as a separate local-only management UI. It supports tunnel start/stop/restart (only for a tunnel child launched by the panel), allowlisted workspace root add/remove, maxSessions/maxSearches/searchMaxResults/searchMaxDepth, and PowerShell enablement.
+- Panel binds only to 127.0.0.1:8766; uses a fresh in-memory 256-bit bearer token, requires the tokenized session URL to serve the dashboard, rejects unauthenticated API calls and unexpected Host/Origin values, and does not persist or display CONTROL_PLANE_API_KEY.
+- Added `start-raya-admin-panel.ps1`, `start-mcp-stdio-panel.cmd`, and `raya-admin-panel/stdio-launcher.mjs`. The tunnel profile `raya-local` now points its stdio command to the panel-aware launcher. Backup: `raya-local.yaml.backup-panel-20261105`.
+- The panel-aware stdio launcher reads `raya-admin-panel/panel-config.json`, validates local existing non-reparse workspace roots, requires the local-mcp-bridge root, rejects drive roots/duplicates/nested roots/system folders, then sets MCP_ALLOWED_ROOTS and the PowerShell gate for server.mjs.
+- Initial panel config mirrors the 19 current roots. Six are stale/missing and are retained for user review; the panel warns and blocks server start until those are removed or the intended folders are restored. No existing workspace or root directory was created/deleted.
+- Verification: panel source and embedded UI script syntax checks passed; panel smoke test passed 9 checks (token-gated dashboard, unauthenticated API blocked, authenticated status, drive-root rejection, rejected config leaves file unchanged); `npm run lint` and `npm test` both passed (46 core, 34 format/config, HTTP auth/initialize, 36 URL-security). Panel-aware stdio launcher was started against a temporary test config with 13 existing roots, spawned `server.mjs`, and was terminated; original 19-root panel config was restored.
+- Live handoff remains pending: the current tunnel was not stopped or restarted. `tunnel-client doctor` loaded the updated profile but its control-plane key check failed in the MCP tool process because CONTROL_PLANE_API_KEY is not inherited into that separate process environment. Start the panel from the original PowerShell session that has the key after Ctrl+C-stopping the current tunnel. Do not touch IranPriceScout or port 8765.
+- This is a local admin-panel prototype, not a Windows service or a production security boundary. Production filesystem confinement remains NOT ACCEPTED; no commits or PRs were created.\n\n## 2026-11-06 security continuation\n\n- Revalidated baseline: `npm run lint` PASS. First `npm test` exposed a real managed-process termination race: the Windows `taskkill.exe` request was launched asynchronously and the MCP tool returned before the child process emitted `close`; the smoke test observed `status=running`.\n- Corrected `advanced-tools.mjs` so Windows tree termination awaits the `taskkill.exe` result and then waits up to 5 seconds for the managed child `close` event. `force_terminate` now reports success only after process exit is confirmed; timeout-driven termination records a bounded error rather than silently claiming completion.\n- Revalidation after the fix: `npm run lint` PASS; `npm test` PASS — 46 core checks, 34 format/config checks, HTTP auth/initialize (unauthorized blocked, authenticated 200), and 36 URL-security checks. The failed-run child PID was confirmed absent afterward.\n- Isolated broker test preflight confirmed service, fixture, image, pipe and broker process absent. Attempted to provision only the disposable prototype service; Windows Service Control Manager returned ACCESS_DENIED (5) at `sc create`. Setup stopped immediately; no service, ProgramData fixture/image, broker process, Production root/ACL, runtime setting, or tunnel was changed. Administrative elevation is required to continue service-boundary tests.\n- Existing hard-link findings remain unresolved in Production: current same-user path-based handlers do not prove race-free single-link enforcement across operation commit boundaries. The broker remains an isolated read-only prototype; Production remains NO-GO and Phase 1 NOT ACCEPTED.\n- No commits, resets, cleanup of pre-existing work, Production handler changes, workspace ownership/ACL migrations, or IranPriceScout/8765 changes were made.\n
