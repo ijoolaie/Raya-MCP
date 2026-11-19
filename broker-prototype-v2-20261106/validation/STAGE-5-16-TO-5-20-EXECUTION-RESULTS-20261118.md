@@ -22,6 +22,7 @@ Inspected the existing ACK-failure injection path in `integrated-submit-adapter-
 - The test verifies one real Adapter submission becomes retained.
 - The Submitter is degraded after that failure, so the existing seam does not establish that a second independent Adapter submission can be admitted and retained through the same live Adapter/Submitter.
 - No second record was fabricated or inserted to claim independent submission coverage.
+- A later test-only attempt armed ACK failure on both independent Adapter/Submitter pairs and admitted one real READ through each before completion. Adapter A reached ACK failure; Adapter B remained at one issuer lease with zero Worker handle-close calls, so the shared Worker sequence still produced only one retained record.
 
 A deterministic, ownership-correct second-retention injection seam or a separately supported independent Adapter/Submitter arrangement is still required.
 
@@ -145,3 +146,9 @@ Verification:
 - The build script removed its declared EXE/OBJ outputs.
 
 This adds deterministic concurrent duplicate-publication coverage for the shared Worker helper. It does not establish two distinct runtime operations racing from separate real I/O retain paths, nor does it cover all retain branches. Stage 5.18 remains PARTIAL. Stage 5.16 remains BLOCKED; this test is intentionally a same-operation duplicate race and is not evidence of two independent Adapter-associated retained submissions. Stage 5.19 and 5.20 remain as stated above. No production source/header, build script, model, configuration, or recovery behavior changed. No retained resource was released, retried, replayed, or deleted. Phase 1 remains NOT ACCEPTED; Production remains NO-GO.
+
+## Addendum — 2026-11-19 dual-Adapter / shared-Worker retention attempt
+
+A focused test-only experiment changed the existing shared-Worker scenario to arm ACK-signal failure independently for both Adapters, submit one real READ through each Adapter before completing either pipe, and then complete both operations. The experiment did not establish two retained records. Observed diagnostic at the failing assertion: Adapter A reached its two Worker handle-close calls and ACK failure injection (`close=2`, `injected=1`, `issuer_leases=0`); Adapter B had no Worker handle-close calls and no ACK failure injection (`close=0`, `injected=0`) while its Submitter still held one issuer lease. The test stopped at this assertion. It therefore provides no evidence of a second Adapter-associated retained operation.
+
+The experimental test source was restored exactly; no production source/header or build script was changed, no generated artifact remained, and the Working Copy was clean after restoration. This result narrows the current test limitation: the first Adapter's ACK-failure path prevents this attempted shared-Worker sequence from reaching the second Adapter's close/ACK path. It does not prove that every possible supported arrangement is impossible, but a different deterministic, ownership-correct runtime arrangement or an explicitly reviewed test seam is still needed. No synthetic retained record was used. Stage 5.16 remains BLOCKED / NOT COMPLETE; no release, retry, replay, or cleanup behavior was introduced. Phase 1 remains NOT ACCEPTED; Production remains NO-GO.
