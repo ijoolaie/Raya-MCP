@@ -1,0 +1,71 @@
+﻿# Stage 5.20 Source-Backed Resource Ownership and Failure-Class Matrix (2026-11-19)
+
+## Purpose and decision boundary
+
+This document translates delegated O-520-3 policy into a source-backed ownership map. It identifies which component controls each state/resource at the observed transition boundaries and what evidence is missing when a transition fails. It is **not** a reconciliation procedure, recovery API specification, or authorization to mutate retained state. Gate D remains authoritative: no evidence-specific reconciliation action is approved or proven safe.
+
+Reviewed production sources (line numbers refer to this revision):
+
+- `integrated-submit-adapter-v2.c`: Adapter envelope retention/free, Submitter callbacks, submit admission and cleanup (notably lines 139-204, 256-335, 400-548).
+- `dedicated-io-submitter-v2.c`: queue/issue/publish/ACK lifecycle (notably lines 87-200, 560-590).
+- `managed-pipe-io-v2.c`: DIRECT operation allocation, caller cleanup, handoff, terminal path and retention (notably lines 11-145 and the submit body following line 150).
+- `reaper-managed-worker-v2.c`: Worker retained-list publication/inventory and Worker completion/finalization (notably lines 205-217, 220-280, 640-682).
+
+## Ownership domains established by source
+
+| Domain | Sole state/resource owner | Source-backed boundary | Explicit non-authority |
+|---|---|---|---|
+| Adapter envelope, Adapter retained-list membership/count, Adapter operation ID, client callback/context | Adapter | `retain_envelope` inserts the envelope under Adapter lock and records first cause/stage; `adapter_free` decrements active count and frees operation buffer/envelope; successful `adapter_worker_release` ACKs, invokes callback, then frees. | Worker retained-list membership or Worker terminal release does not prove Adapter envelope is reclaimable. |
+| Worker operation lifecycle, Worker retained-list membership/count, Worker registry/reservation and Worker admission leases | Managed Worker / integrated Worker core | Worker publishes retained operations under Worker lock; Worker terminal path performs terminal hold, finalizer close/commit, owner release, integrated registry release, then calls release callback. | Adapter counts, Submitter state, or Worker v1 inventory alone do not authorize release. |
+| Submitter request state, queue links/count, active producer/issue state, issuer lease, Issue/Publish effect and ACK transition | Dedicated Submitter | Submitter thread removes queued request, tracks ISSUE and PUBLISH effect separately, and moves request to ISSUED or UNCERTAIN; public admit/enqueue/abort/ack APIs enter Submitter API gate. | Submitter request state does not own or independently free the Adapter envelope or Worker operation. |
+| Pipe owner/finalizer state and issuing/completion handles | Per-operation owner/finalizer state machine, driven by caller or Worker according to current operation ownership | Caller-side pre-issue cleanup or Worker terminal completion calls finalizer close/commit, then owner release. Worker path order is visible at `reaper-managed-worker-v2.c:656-681`; Adapter pre-issue cleanup at `integrated-submit-adapter-v2.c:308-335`; DIRECT caller terminal cleanup at `managed-pipe-io-v2.c:67-129`. | A retained-list entry, close attempt count, null handle, or component lifecycle flag alone is not a complete cross-plane effect ledger. No component may repeat close or infer release from counts. |
+
+The Adapter's operation is embedded in its envelope; the Worker holds a reference to that operation while it owns it. After the Worker release callback boundary, the Worker promises not to touch the operation, but the Adapter envelope may remain retained if Submitter ACK fails (`integrated-submit-adapter-v2.c:193-204`). This is a real split lifetime, not shared ownership of the same free operation.
+
+For DIRECT submissions, `managed_pipe_release` invokes the client callback and frees buffer/context/operation (`managed-pipe-io-v2.c:11-18`). The DIRECT caller owns the operation until successful Worker handoff; after handoff, Worker controls terminal progression and invokes the release callback only after its terminal release path (`managed-pipe-io-v2.c:137-145`, `reaper-managed-worker-v2.c:656-681`).
+
+## Failure-class matrix
+
+| Failure class / point | Owner at failure boundary | Source-observed committed or uncertain effects | Current disposition and missing proof |
+|---|---|---|---|
+| Adapter PRE_ISSUE_SETUP before Worker registration/admission | Adapter owns envelope and locally created buffer/handles; operation finalizer/owner tracks handle disposition | Event/duplicate-handle creation and operation initialization are staged before Worker registration (`integrated-submit-adapter-v2.c:400-435`). | QUARANTINE on failed close or invariant failure. Need exact per-handle close and owner/finalizer state evidence; no blind close retry or envelope free. |
+| Adapter Worker admission rejected; caller-side cleanup | Adapter owns envelope; caller drives per-operation owner/finalizer; Worker owns Worker registry/admission state | Caller-submission-failed, finalizer close/commit, owner release, then envelope free are sequential; any failed step retains (`integrated-submit-adapter-v2.c:437-455`). | QUARANTINE on any failed transition. A completed earlier step is not rolled back; no generic cleanup restart. |
+| Adapter Submitter admission rejected after Worker admission | Adapter owns envelope; Submitter owns admission result; caller drives owner/finalizer cleanup; Worker tracks admission lease | Abort/owner/finalizer/owner-release/Worker-finish/free occur as ordered steps (`integrated-submit-adapter-v2.c:456-472`). | QUARANTINE if any step fails. Missing exact cross-plane commit ledger prevents safe repair. |
+| Adapter Worker reserve rejected after Submitter admission | Adapter owns envelope; Submitter owns admission until abort; Worker owns reserve/admission accounting; caller executes cleanup | Submitter abort, caller-submission-failed, finalizer close/commit, owner release, Worker finish, free (`integrated-submit-adapter-v2.c:474-491`). | QUARANTINE on any failed step. Existing seam review found no deterministic supported callback at the admission-to-reserve boundary; no synthetic race test. |
+| Adapter enqueue rejected / backpressure | Adapter owns envelope; Submitter owns admission/queue state; Worker owns reservation | Submitter abort precedes caller-terminal transition, integrated caller-terminal, finalizer close/commit, owner release, unreserve, Worker finish, then free (`integrated-submit-adapter-v2.c:492-548`). | QUARANTINE on any failed transition. Earlier finalizer/owner commits may already be irreversible; do not retry remaining sequence generically. |
+| Submitter Issue NOT_ACCEPTED | Submitter owns request transition; Adapter callback `adapter_not_issued` performs caller-side cleanup; Worker owns its reservation/admission records | Submitter marks NOT_ISSUED only after validating issue state/leases, then calls not-issued callback (`dedicated-io-submitter-v2.c:140-161`). Adapter callback performs owner/finalizer/unreserve/finish/free (`integrated-submit-adapter-v2.c:281-335`). | This is a determinate path only when Submitter's NOT_ISSUED contract is intact. If any callback/cleanup/accounting step fails, QUARANTINE. Never infer NOT_ISSUED from a stage label. |
+| Submitter Issue uncertain or Publish uncertain | Submitter owns request/effect ledger; Adapter envelope remains allocated; Worker may or may not have accepted handoff depending on publish substep | Submitter records UNKNOWN and degrades on invalid Issue result or failed Publish (`dedicated-io-submitter-v2.c:163-190`). Adapter publish distinguishes not-transferred after OS acceptance and retains; transferred path marks Worker ownership (`integrated-submit-adapter-v2.c:256-278`). | QUARANTINE; NEVER REPLAY. Need authoritative issue and transfer effect evidence; local OS acceptance is not recipient commit. |
+| Worker DIRECT or Adapter-associated completion uncertain / terminal hold | Worker owns operation lifecycle and retained Worker record; Adapter retains its envelope if associated | Worker observes completion/owner collection and terminal-holds before finalizer close (`reaper-managed-worker-v2.c:640-655`). | QUARANTINE. No finalizer close, owner release, registry release, callback, or I/O retry is implied by terminal hold. |
+| Worker finalizer close or finalizer commit failure | Worker owns operation lifecycle; finalizer state machine controls close/commit facts; Adapter envelope remains alive for associated operation | Worker calls close then commit; failure returns before owner release, registry release, and callback (`reaper-managed-worker-v2.c:656-662`). | QUARANTINE; NO BLIND CLOSE RETRY. Need per-handle irreversible-effect proof and exact finalizer state; current v1 record does not provide this complete ledger. |
+| Worker owner release failure after finalizer commit | Worker owns operation lifecycle; per-operation owner state tracks release | Finalizer may already be committed before owner release fails (`reaper-managed-worker-v2.c:656-668`). | QUARANTINE. Do not repeat finalizer or synthesize owner release; partial effects are irreversible. |
+| Worker integrated registry release failure after finalizer and owner release | Worker owns registry/reservation state; operation's finalizer and owner commits already occurred | Registry release follows finalizer and owner release (`reaper-managed-worker-v2.c:664-675`). | QUARANTINE. Do not repeat earlier commits or manually unlink/decrement registry state. |
+| Worker release callback / Adapter Submitter ACK failure (POST_TERMINAL) | Worker has completed its operation-side release boundary; Adapter owns remaining envelope; Submitter owns ACK/request state | Worker invokes release callback only after its terminal release sequence (`reaper-managed-worker-v2.c:678-681`). Adapter marks terminal release, ACKs; on ACK failure retains envelope and suppresses client callback/free (`integrated-submit-adapter-v2.c:193-204`). | QUARANTINE; NEVER REISSUE I/O. Worker operation handles/registry may already be released; Submitter ACK and client callback are separate. Need authenticated/idempotent ACK evidence and explicit envelope disposition before any future action. |
+| Adapter/Worker ownership invariant, partial record, identity-less or conflicting evidence | No single action owner can be proven from available record | First-retain cause/stage and inventory identify a diagnostic classification, not every committed effect (`integrated-submit-adapter-v2.c:139-180`; Worker inventory validates identity/shape but is read-only at `reaper-managed-worker-v2.c:220-280`). | QUARANTINE; NO ID-BASED ACTION. Missing or conflicting ownership/effect evidence is itself disqualifying. |
+| Orchestrator shutdown/cursor or cross-plane partial commit | Orchestrator owns its orchestration cursor/lifecycle; underlying Adapter/Worker/Submitter retain their own state | The source review and Gate D record establish no safe cursor mutation or cross-plane rollback. | Preserve cursor and component states; no cursor skip/reset, forced teardown, or fabricated empty count. |
+
+## Invariants for any future action contract
+
+1. Exactly one component owns each mutable state/resource at a given transition boundary. A reference or inventory correlation is not ownership transfer.
+2. Ownership transfer must be explicit, validated, and ordered; after transfer, the previous owner must not free or mutate the transferred object.
+3. Finalizer close, finalizer commit, pipe-owner release, integrated registry release/unreserve, Submitter ACK, client callback, and envelope free are separate effects. A later failure does not roll back earlier effects.
+4. Submitter Issue and Publish effects are distinct. `ISSUE_ACCEPTED` / OS completion do not prove recipient-level WRITE commit.
+5. Worker post-terminal release and Adapter post-terminal envelope release are distinct. Worker v1 and Adapter v1 inventories are independent and are not an atomic cross-plane snapshot.
+6. Missing, stale, partial, conflicting, identity-less, or non-authenticated evidence means quarantine.
+7. No ID-only release, list unlink, counter adjustment, repeated close, callback/ACK retry, I/O replay, or Orchestrator cursor mutation is permitted by this matrix.
+
+## Remaining evidence gaps and bounded next work
+
+- The production v1 inventories do not expose a complete immutable per-record effect ledger across Issue, Publish/handoff, completion, each handle close, finalizer commit, owner release, integrated release/unreserve, Worker finish, Submitter ACK, callback, and envelope free.
+- There is no recipient-side authenticated receipt/status or stable idempotency protocol for uncertain WRITE.
+- Existing supported seams do not deterministically reach the exact Adapter/ DIRECT reserve-rejection interval; no new seam is introduced by this documentation pass.
+- The current Stage 5.20 safe scope remains source-backed clarification and negative quarantine/no-replay evidence only. Gate D remains complete with no action approved; positive recovery tests and mutation remain blocked.
+
+## Verification and status
+
+Documentation-only source review. No source/header/API/test/build/lifecycle/ownership/cleanup/recovery/retry/callback/replay behavior changed. No tests or builds were run. No retained resource was modified, released, retried, replayed, or deleted.
+
+- O-520-3: DECIDED at policy level; source-backed ownership domains and failure boundaries mapped here. This does not approve an action.
+- Gate D: COMPLETE; no reconciliation action approved.
+- Gate E: BLOCKED; positive recovery actions/tests remain unauthorized and unsupported.
+- Gate F: remains subject to remaining acceptance evidence and PR review; not passed by this document.
+- Stage 5.20: INCOMPLETE. Stage 5 / Phase 1: NOT ACCEPTED. Production: NO-GO.

@@ -425,3 +425,9 @@ The project owner explicitly delegated selection of the six Stage 5.20 decision 
 - Stage 5 / Phase 1: NOT ACCEPTED pending remaining gates and review. Production: NO-GO.
 
 This is a documentation-only decision record. No source, header, ABI, test, build script, journal, lifecycle, ownership implementation, cleanup, recovery, retry, callback, replay, authorization API, or Orchestrator cursor behavior changed. No tests/builds were run. No retained resource was released, modified, retried, replayed, or deleted.
+
+## Addendum - 2026-11-19 O-520-3 source-backed ownership matrix
+
+Pushed the detailed failure-class ownership map in `validation/STAGE-5-20-RESOURCE-OWNERSHIP-MATRIX-20261119.md`. It traces the Adapter envelope, Worker operation/registry/reservation, Submitter request/Issue/Publish/ACK, and per-operation owner/finalizer domains to the current production source, then maps pre-issue setup, admission rejection, reserve rejection, enqueue/backpressure, NOT_ISSUED, uncertain Issue/Publish, Worker terminal hold, finalizer/owner/registry failures, post-terminal ACK failure, and identity/invariant failures. The matrix distinguishes separate irreversible effects and records the missing per-record cross-plane effect ledger and recipient WRITE evidence. It is documentation-only; no action is approved and no runtime behavior changed.
+
+This addendum also supersedes the earlier O-520 register's statement that all six decisions were OPEN: O-520-1 through O-520-6 are now DECIDED at policy level by the delegated decision record above. The remaining Gate E blocker is technical/evidentiary, not an outstanding owner-policy answer. Stage 5.20 remains INCOMPLETE; Gate D complete/no action approved; Gate E blocked; Gate F not passed; Phase 1 NOT ACCEPTED; Production NO-GO.
