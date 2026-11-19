@@ -598,6 +598,14 @@ static int test_acknowledge_set_failure(void) {
  CHECK(raya_submitter_snapshot(&s,&life,&q,&p,&a,&l));
  CHECK(life==RAYA_SUBMITTER_DEGRADED && l==0 && a==0);
  CHECK(req.state==RAYA_SUBMITTER_REQ_ACKED);
+ {
+  LONG set_calls=InterlockedCompareExchange(&g.set_calls,0,0);
+  CHECK(!raya_submitter_acknowledge(&s,&req));
+  CHECK(req.state==RAYA_SUBMITTER_REQ_ACKED);
+  CHECK(InterlockedCompareExchange(&g.set_calls,0,0)==set_calls);
+  CHECK(raya_submitter_snapshot(&s,&life,&q,&p,&a,&l));
+  CHECK(life==RAYA_SUBMITTER_DEGRADED && q==0 && p==0 && a==0 && l==0);
+ }
  CHECK(WaitForSingleObject(s.thread,5000)==WAIT_OBJECT_0);
  CHECK(!raya_submitter_join(&s,5000));
  cleanup_test_state(&s);
