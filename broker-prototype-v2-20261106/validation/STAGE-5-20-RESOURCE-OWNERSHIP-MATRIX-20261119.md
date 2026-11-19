@@ -120,3 +120,9 @@ The existing Submitter failure-matrix test now counts the injected callbacks for
 Validation used the existing `build-dedicated-io-submitter-v2-failure-test.cmd` script with VS 2026 BuildTools 18.7.3 x64 and `/W4 /WX`: 25 consecutive passes, 302 assertions per pass (7,550 assertion executions). The test uses the existing public Submitter issue/publish/not-issued callback seams. Production source/header/API and runtime behavior are unchanged.
 
 This evidence is intentionally narrow: it proves no callback replay within these Submitter worker executions. It does not prove recipient-side WRITE commit, durable no-replay across process restart, or end-to-end Adapter/Worker recovery. Those remain unsupported and unauthorized. No new positive recovery/reconciliation action is implied.
+
+### Admission remains closed after an uncertain Submitter effect
+
+The same two negative runtime tests also verify the next-operation boundary after the Submitter worker has exited on an uncertain effect. In both Issue-uncertain and Publish-uncertain cases, lifecycle remains `RAYA_SUBMITTER_DEGRADED`; a fresh zero-initialized request is rejected by the existing public `raya_submitter_admit` API, retains `request_id == 0` and `BUILDING` state, and the previously counted Issue/Publish callback totals remain unchanged. Thus the test proves both (a) no second callback for the uncertain request and (b) no new Submitter admission after the uncertainty has degraded that Submitter instance. This is a Submitter-local, same-process negative guarantee only; it does not assert global Adapter/Worker admission state, queued-request disposition, recipient commit, or restart behavior.
+
+The prescribed failure-matrix script passed 25 consecutive VS 2026 BuildTools 18.7.3 x64 `/W4 /WX` runs, now 310 assertions per run (7,750 total assertion executions). Test-only; no Production code or runtime semantics changed.

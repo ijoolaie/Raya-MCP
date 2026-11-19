@@ -379,7 +379,8 @@ static int test_request_identity_and_effect_commit(void) {
 static int test_publish_failure_effect_ledger(void) {
  raya_dedicated_submitter s;
  raya_submitter_request req;
- ZeroMemory(&g,sizeof(g)); ZeroMemory(&s,sizeof(s)); ZeroMemory(&req,sizeof(req));
+ raya_submitter_request req2;
+ ZeroMemory(&g,sizeof(g)); ZeroMemory(&s,sizeof(s)); ZeroMemory(&req,sizeof(req)); ZeroMemory(&req2,sizeof(req2));
  g_issue_accepted_calls=0; g_publish_fail_calls=0;
  CHECK(raya_submitter_start_with_api(&s,2,&injected_api,issue_accepted_counted,
                                      publish_fail_counted,not_issued_counted,NULL));
@@ -397,13 +398,18 @@ static int test_publish_failure_effect_ledger(void) {
  CHECK(g_issue_accepted_calls==1);
  CHECK(g_publish_fail_calls==1);
  CHECK(g.not_issued_calls==0);
+ CHECK(s.lifecycle==RAYA_SUBMITTER_DEGRADED);
+ CHECK(!raya_submitter_admit(&s,&req2,NULL));
+ CHECK(req2.request_id==0 && req2.state==RAYA_SUBMITTER_REQ_BUILDING);
+ CHECK(g_issue_accepted_calls==1 && g_publish_fail_calls==1);
  cleanup_test_state(&s);
  return 0;
 }
 static int test_issue_uncertain_effect_ledger(void) {
  raya_dedicated_submitter s;
  raya_submitter_request req;
- ZeroMemory(&g,sizeof(g)); ZeroMemory(&s,sizeof(s)); ZeroMemory(&req,sizeof(req));
+ raya_submitter_request req2;
+ ZeroMemory(&g,sizeof(g)); ZeroMemory(&s,sizeof(s)); ZeroMemory(&req,sizeof(req)); ZeroMemory(&req2,sizeof(req2));
  g_issue_uncertain_calls=0; g_publish_noop_calls=0;
  CHECK(raya_submitter_start_with_api(&s,2,&injected_api,issue_uncertain_now,
                                      publish_noop_counted,not_issued_counted,NULL));
@@ -420,6 +426,10 @@ static int test_issue_uncertain_effect_ledger(void) {
  CHECK(g_issue_uncertain_calls==1);
  CHECK(g_publish_noop_calls==0);
  CHECK(g.not_issued_calls==0);
+ CHECK(s.lifecycle==RAYA_SUBMITTER_DEGRADED);
+ CHECK(!raya_submitter_admit(&s,&req2,NULL));
+ CHECK(req2.request_id==0 && req2.state==RAYA_SUBMITTER_REQ_BUILDING);
+ CHECK(g_issue_uncertain_calls==1 && g_publish_noop_calls==0);
  cleanup_test_state(&s);
  return 0;
 }
