@@ -146,6 +146,19 @@ static int test_close_failure_retention(void) {
  CHECK(worker.retained_head->adapter_instance_id==0 && worker.retained_head->adapter_operation_id==0);
  CHECK(worker.retained_head->first_retain_cause==RAYA_RECOVERY_CAUSE_HANDLE_CLOSE);
  CHECK(worker.retained_head->first_retain_stage==RAYA_WORKER_RETAIN_STAGE_DIRECT);
+ {
+  raya_managed_operation *retained=worker.retained_head;
+  int duplicate_publish;
+  EnterCriticalSection(&worker.lock);
+  duplicate_publish=raya_managed_worker_publish_retained_locked(&worker,
+      retained,RAYA_RECOVERY_CAUSE_OWNERSHIP_INVARIANT,
+      RAYA_WORKER_RETAIN_STAGE_POST_TERMINAL);
+  LeaveCriticalSection(&worker.lock);
+  CHECK(!duplicate_publish);
+  CHECK(worker.retained_count==1 && worker.retained_head==retained);
+  CHECK(retained->first_retain_cause==RAYA_RECOVERY_CAUSE_HANDLE_CLOSE);
+  CHECK(retained->first_retain_stage==RAYA_WORKER_RETAIN_STAGE_DIRECT);
+ }
  CHECK(!raya_managed_worker_join(&worker,5000));
  CHECK(worker.joined==TRUE);
  CHECK(!raya_managed_worker_destroy(&worker));

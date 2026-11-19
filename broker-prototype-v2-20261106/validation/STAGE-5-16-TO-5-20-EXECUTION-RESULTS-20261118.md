@@ -118,3 +118,17 @@ The actual production enumeration/reconciliation/release API contract still need
 - Stage 5 implementation/recovery acceptance: BLOCKED / NOT ACCEPTED.
 - Phase 1: NOT ACCEPTED.
 - Production: NO-GO.
+
+## Addendum — 2026-11-19 real DIRECT first-retain immutability check
+
+Extended the existing real test_close_failure_retention runtime path in managed-pipe-io-v2-native-test.c. After the actual managed-pipe READ reaches Worker retention through the injected second-handle-close failure, the test now attempts a second publication of that same retained operation under the Worker lock using a different cause and POST_TERMINAL stage.
+
+Observed result: duplicate publication is rejected; retained-list head and count remain unchanged; the original HANDLE_CLOSE / DIRECT first-retain cause and stage remain unchanged. This is a runtime-created retained operation, not a fabricated test record.
+
+Verification:
+- build-managed-pipe-io-v2-native-test.cmd, Visual Studio 2026 BuildTools 18.7.3 x64, /W4 /WX: PASS.
+- 10 consecutive executions: PASS.
+- 101 assertions per execution; 1,010 assertion executions total.
+- The first invocation was made from the repository root, where the relative-source build script cannot resolve its inputs; it failed before compilation and created no artifacts. The prescribed rerun from broker-prototype-v2-20261106 passed and its script removed all declared EXE/OBJ outputs.
+
+This closes one real-runtime immutability gap only. Stage 5.18 remains PARTIAL because concurrent first-publication races and other runtime retain branches are not yet covered. Stage 5.16 remains BLOCKED; this test does not manufacture a second Adapter-associated retained submission. No production source/header, build script, model, configuration, or recovery behavior changed. No retained resource was released, retried, replayed, or deleted. Phase 1 remains NOT ACCEPTED; Production remains NO-GO.
