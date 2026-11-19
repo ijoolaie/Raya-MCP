@@ -126,3 +126,14 @@ This evidence is intentionally narrow: it proves no callback replay within these
 The same two negative runtime tests also verify the next-operation boundary after the Submitter worker has exited on an uncertain effect. In both Issue-uncertain and Publish-uncertain cases, lifecycle remains `RAYA_SUBMITTER_DEGRADED`; a fresh zero-initialized request is rejected by the existing public `raya_submitter_admit` API, retains `request_id == 0` and `BUILDING` state, and the previously counted Issue/Publish callback totals remain unchanged. Thus the test proves both (a) no second callback for the uncertain request and (b) no new Submitter admission after the uncertainty has degraded that Submitter instance. This is a Submitter-local, same-process negative guarantee only; it does not assert global Adapter/Worker admission state, queued-request disposition, recipient commit, or restart behavior.
 
 The prescribed failure-matrix script passed 25 consecutive VS 2026 BuildTools 18.7.3 x64 `/W4 /WX` runs, now 310 assertions per run (7,750 total assertion executions). Test-only; no Production code or runtime semantics changed.
+
+## Negative queued-work quarantine after uncertain Submitter Issue
+
+The existing Issue callback seam now deterministically holds the first Issue while a second request is admitted and queued. The first callback then returns `RAYA_SUBMITTER_ISSUE_UNCERTAIN`. The runtime test observes all of the following after the Submitter worker exits:
+
+- First request remains `UNCERTAIN`, Issue effect `UNKNOWN`, Publish `NOT_ATTEMPTED`.
+- Second request remains `QUEUED`; Submitter queue count remains one. It is not issued by a second callback and is not converted to `NOT_ISSUED`.
+- `active_issue` is zero, but the issuer lease remains one; the captured degraded snapshot records queue=1, active_issue=0, issuer_leases=1. The lease is intentionally retained under the uncertain Issue contract.
+- Issue callback count is exactly one; Publish and NOT_ISSUED callback counts are zero.
+
+The deterministic sequence uses only existing public admission/enqueue/snapshot APIs and the existing Issue callback seam; no internal state mutation, new fault hook, or Production change. The prescribed VS 2026 BuildTools 18.7.3 x64 `/W4 /WX` failure-matrix build passed 25 consecutive runs × 332 assertions = 8,300 assertion executions. This is negative same-process Submitter evidence only. The queued request's eventual disposition remains deliberately unresolved/quarantined; this test does not authorize draining, aborting, releasing, retrying, or replaying it, and provides no recipient-side WRITE or restart evidence.
