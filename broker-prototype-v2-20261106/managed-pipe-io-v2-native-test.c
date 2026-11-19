@@ -112,6 +112,87 @@ static int test_default_cancel_drain(void) {
  CHECK(CloseHandle(callback_event));CHECK(CloseHandle(client));CHECK(CloseHandle(server));
  return 0;
 }
+typedef struct {
+ raya_managed_worker *worker;
+ raya_managed_operation *operation;
+ HANDLE start_event;
+ DWORD cause;
+ raya_worker_retain_stage stage;
+ volatile LONG published;
+} concurrent_retain_attempt;
+static DWORD WINAPI concurrent_retain_thread(void *parameter) {
+ concurrent_retain_attempt *attempt=(concurrent_retain_attempt *)parameter;
+ LONG result=-1;
+ if(WaitForSingleObject(attempt->start_event,5000)==WAIT_OBJECT_0) {
+  EnterCriticalSection(&attempt->worker->lock);
+  result=(LONG)raya_managed_worker_publish_retained_locked(
+      attempt->worker,attempt->operation,attempt->cause,attempt->stage);
+  LeaveCriticalSection(&attempt->worker->lock);
+ }
+ (void)InterlockedExchange(&attempt->published,result);
+ return 0;
+}
+static int test_concurrent_first_retain_publication(void) {
+ raya_managed_worker worker;
+ raya_managed_operation operation;
+ concurrent_retain_attempt attempts[2];
+ HANDLE start_event=NULL,threads[2]={NULL,NULL};
+ LONG accepted;
+ int ok=0;
+ ZeroMemory(&operation,sizeof(operation));
+ CHECK(raya_managed_worker_start(&worker));
+ operation.operation_initialized=TRUE;
+ operation.identity_valid=TRUE;
+ operation.worker_epoch=worker.worker_epoch;
+ operation.worker_operation_id=1;
+ operation.inventory_kind=RAYA_WORKER_INVENTORY_DIRECT;
+ ZeroMemory(attempts,sizeof(attempts));
+ start_event=CreateEventW(NULL,TRUE,FALSE,NULL);
+ CHECK(start_event!=NULL);
+ attempts[0].worker=&worker; attempts[0].operation=&operation;
+ attempts[0].start_event=start_event;
+ attempts[0].cause=RAYA_RECOVERY_CAUSE_HANDLE_CLOSE;
+ attempts[0].stage=RAYA_WORKER_RETAIN_STAGE_DIRECT;
+ attempts[1].worker=&worker; attempts[1].operation=&operation;
+ attempts[1].start_event=start_event;
+ attempts[1].cause=RAYA_RECOVERY_CAUSE_OWNERSHIP_INVARIANT;
+ attempts[1].stage=RAYA_WORKER_RETAIN_STAGE_POST_TERMINAL;
+ threads[0]=CreateThread(NULL,0,concurrent_retain_thread,&attempts[0],0,NULL);
+ CHECK(threads[0]!=NULL);
+ threads[1]=CreateThread(NULL,0,concurrent_retain_thread,&attempts[1],0,NULL);
+ CHECK(threads[1]!=NULL);
+ CHECK(SetEvent(start_event));
+ CHECK(WaitForMultipleObjects(2,threads,TRUE,5000)==WAIT_OBJECT_0);
+ CHECK(InterlockedCompareExchange(&attempts[0].published,0,0)>=0);
+ CHECK(InterlockedCompareExchange(&attempts[1].published,0,0)>=0);
+ accepted=(InterlockedCompareExchange(&attempts[0].published,0,0)==1)+
+          (InterlockedCompareExchange(&attempts[1].published,0,0)==1);
+ CHECK(accepted==1);
+ CHECK(worker.retained_count==1 && worker.retained_head==&operation);
+ if(InterlockedCompareExchange(&attempts[0].published,0,0)==1) {
+  CHECK(operation.first_retain_cause==attempts[0].cause);
+  CHECK(operation.first_retain_stage==attempts[0].stage);
+ } else {
+  CHECK(operation.first_retain_cause==attempts[1].cause);
+  CHECK(operation.first_retain_stage==attempts[1].stage);
+ }
+ EnterCriticalSection(&worker.lock);
+ if(worker.retained_head==&operation && worker.retained_count==1) {
+  worker.retained_head=NULL;
+  worker.retained_count=0;
+  operation.retained_next=NULL;
+  ok=1;
+ }
+ LeaveCriticalSection(&worker.lock);
+ CHECK(ok);
+ CHECK(raya_managed_worker_shutdown(&worker));
+ CHECK(raya_managed_worker_join(&worker,5000));
+ CHECK(raya_managed_worker_destroy(&worker));
+ CHECK(CloseHandle(threads[0]));
+ CHECK(CloseHandle(threads[1]));
+ CHECK(CloseHandle(start_event));
+ return 0;
+}
 typedef struct {unsigned calls;unsigned fail_on;} close_fault;
 static BOOL close_with_fault(HANDLE h,void *context) {
  close_fault *f=(close_fault *)context;
@@ -190,6 +271,7 @@ int main(void) {
  if(test_local_completion())return 1;
  if(test_write_path())return 1;
  if(test_default_cancel_drain())return 1;
+ if(test_concurrent_first_retain_publication())return 1;
  if(test_close_failure_retention())return 1;
  if(test_submission_failure())return 1;
  (void)printf("Managed pipe I/O: %u assertions, 0 failures\n",checks);

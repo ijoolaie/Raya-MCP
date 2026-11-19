@@ -49,7 +49,8 @@ This validates the actual direct I/O retention path's in-memory identity and fir
 - The API test now republishes the same test-owned operation through the common Worker publication helper with a different cause/stage and asserts duplicate publication is rejected and the original cause/stage remain unchanged.
 - The helper checks duplicate list membership before mutating evidence, so repeated publication cannot rewrite the original evidence in this tested case.
 
-Not established: concurrent first-publication races or all distinct runtime retain branches. Those require separate focused tests.
+Added a concurrent same-operation duplicate-publication race test: two Windows threads contend under the Worker-lock contract, exactly one publication succeeds, and the winner's first cause/stage remain intact.
+Not established: two distinct runtime operations concurrently retained through separate real I/O paths, or all distinct runtime retain branches. Those require separate focused tests.
 
 ## 5.19 — Snapshot consistency
 
@@ -103,7 +104,7 @@ The actual production enumeration/reconciliation/release API contract still need
 ## Remaining work
 
 1. 5.16: create a deterministic, non-fabricated way to retain two independent Adapter-associated submissions and validate both stable identity pairs in one runtime snapshot.
-2. 5.18: add concurrent first-publication and additional real runtime-path immutability tests.
+2. 5.18: add distinct-operation concurrent retention coverage and additional real runtime-path immutability tests; same-operation duplicate race is now covered.
 3. 5.19: extend actual runtime snapshot coverage after 5.16 is solved; keep synthetic validator coverage distinct from runtime evidence.
 4. 5.20: specify and review the production Recovery/Reconciliation API contract. No release/retry/replay behavior is authorized by the current test-only identity layer.
 5. Only after the above, proceed to positive recovery tests and Stage 5 acceptance.
@@ -131,4 +132,16 @@ Verification:
 - 101 assertions per execution; 1,010 assertion executions total.
 - The first invocation was made from the repository root, where the relative-source build script cannot resolve its inputs; it failed before compilation and created no artifacts. The prescribed rerun from broker-prototype-v2-20261106 passed and its script removed all declared EXE/OBJ outputs.
 
-This closes one real-runtime immutability gap only. Stage 5.18 remains PARTIAL because concurrent first-publication races and other runtime retain branches are not yet covered. Stage 5.16 remains BLOCKED; this test does not manufacture a second Adapter-associated retained submission. No production source/header, build script, model, configuration, or recovery behavior changed. No retained resource was released, retried, replayed, or deleted. Phase 1 remains NOT ACCEPTED; Production remains NO-GO.
+This closes one real-runtime immutability gap only. Stage 5.18 remains PARTIAL: the same-operation duplicate-publication race is now covered, but distinct-operation runtime retain races and other runtime retain branches are not yet covered. Stage 5.16 remains BLOCKED; this test does not manufacture a second Adapter-associated retained submission. No production source/header, build script, model, configuration, or recovery behavior changed. No retained resource was released, retried, replayed, or deleted. Phase 1 remains NOT ACCEPTED; Production remains NO-GO.
+
+## Addendum — 2026-11-19 concurrent first-publication race
+
+Added `test_concurrent_first_retain_publication` to `managed-pipe-io-v2-native-test.c`. Two independent Windows threads are released by one start event and concurrently attempt to publish the same initialized, identity-bearing DIRECT operation while following the required Worker-lock contract. The contenders use different cause/stage pairs. The test verifies both threads complete, exactly one publication succeeds, the other is rejected as a duplicate, the Worker list contains exactly the single operation, and the stored first-retain cause/stage match the winning contender. The test removes only its own stack-backed synthetic record under the Worker lock before normal Worker shutdown; it does not touch a production retained resource.
+
+Verification:
+- `build-managed-pipe-io-v2-native-test.cmd`, Visual Studio 2026 BuildTools 18.7.3 x64, `/W4 /WX`: PASS.
+- 10 consecutive executions: PASS.
+- 120 assertions per execution; 1,200 assertion executions total.
+- The build script removed its declared EXE/OBJ outputs.
+
+This adds deterministic concurrent duplicate-publication coverage for the shared Worker helper. It does not establish two distinct runtime operations racing from separate real I/O retain paths, nor does it cover all retain branches. Stage 5.18 remains PARTIAL. Stage 5.16 remains BLOCKED; this test is intentionally a same-operation duplicate race and is not evidence of two independent Adapter-associated retained submissions. Stage 5.19 and 5.20 remain as stated above. No production source/header, build script, model, configuration, or recovery behavior changed. No retained resource was released, retried, replayed, or deleted. Phase 1 remains NOT ACCEPTED; Production remains NO-GO.
