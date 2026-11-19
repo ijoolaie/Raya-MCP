@@ -105,7 +105,7 @@ The actual production enumeration/reconciliation/release API contract still need
 ## Remaining work
 
 1. 5.16: create a deterministic, non-fabricated way to retain two independent Adapter-associated submissions and validate both stable identity pairs in one runtime snapshot.
-2. 5.18: add distinct-operation concurrent retention coverage and additional real runtime-path immutability tests; same-operation duplicate race is now covered.
+2. 5.18: distinct-operation concurrent retention coverage and remaining runtime retain branches are still outstanding. Real Adapter-associated first-retain immutability is now covered for the existing ACK-quarantine path; same-operation duplicate race remains covered.
 3. 5.19: extend actual runtime snapshot coverage after 5.16 is solved; keep synthetic validator coverage distinct from runtime evidence.
 4. 5.20: specify and review the production Recovery/Reconciliation API contract. No release/retry/replay behavior is authorized by the current test-only identity layer.
 5. Only after the above, proceed to positive recovery tests and Stage 5 acceptance.
@@ -152,3 +152,18 @@ This adds deterministic concurrent duplicate-publication coverage for the shared
 A focused test-only experiment changed the existing shared-Worker scenario to arm ACK-signal failure independently for both Adapters, submit one real READ through each Adapter before completing either pipe, and then complete both operations. The experiment did not establish two retained records. Observed diagnostic at the failing assertion: Adapter A reached its two Worker handle-close calls and ACK failure injection (`close=2`, `injected=1`, `issuer_leases=0`); Adapter B had no Worker handle-close calls and no ACK failure injection (`close=0`, `injected=0`) while its Submitter still held one issuer lease. The test stopped at this assertion. It therefore provides no evidence of a second Adapter-associated retained operation.
 
 The experimental test source was restored exactly; no production source/header or build script was changed, no generated artifact remained, and the Working Copy was clean after restoration. This result narrows the current test limitation: the first Adapter's ACK-failure path prevents this attempted shared-Worker sequence from reaching the second Adapter's close/ACK path. It does not prove that every possible supported arrangement is impossible, but a different deterministic, ownership-correct runtime arrangement or an explicitly reviewed test seam is still needed. No synthetic retained record was used. Stage 5.16 remains BLOCKED / NOT COMPLETE; no release, retry, replay, or cleanup behavior was introduced. Phase 1 remains NOT ACCEPTED; Production remains NO-GO.
+
+## Addendum - 2026-11-19 real Adapter-associated first-retain immutability
+
+Extended the existing test_shared_worker_two_adapter_success_then_ack_quarantine scenario in integrated-submit-adapter-v2-api-test.c. After the real Adapter B READ reaches Worker retention through the injected Submitter ACK failure, the test captures the actual retained operation and its original first-retain cause/stage. Under the Worker lock it attempts duplicate publication of that same operation with a different recovery cause and POST_TERMINAL stage.
+
+The test verifies duplicate publication is rejected, the Worker retained-list head/count remain unchanged, and the original first-retain cause/stage remain unchanged. The retained operation is produced by the real Adapter/Worker execution path; no synthetic retained record is introduced.
+
+Verification:
+- build-integrated-submit-adapter-v2-api-test.cmd, Visual Studio 2026 BuildTools 18.7.3 x64, /W4 /WX: PASS.
+- 10 consecutive executions: PASS.
+- 981 assertions per execution across 66 cases; 9,810 assertion executions total.
+- The first build attempt exposed a signed/unsigned comparison warning treated as an error; the test-local variable type was corrected. The successful build completed without warnings/errors.
+- git diff --check: PASS.
+
+This closes one real Adapter-associated first-retain immutability gap for the ACK-quarantine path only. It does not establish two independent Adapter-associated retained submissions on one shared Worker, distinct-operation concurrent runtime retention, or full runtime Snapshot/Recovery coverage. Stage 5.16 remains BLOCKED; Stage 5.18 remains PARTIAL; Stage 5.19 remains PARTIAL; Stage 5.20 remains incomplete. No Production source/header, build script, recovery behavior, or cleanup semantics changed. No retained resource was released, retried, replayed, or deleted. Phase 1 remains NOT ACCEPTED; Production remains NO-GO.

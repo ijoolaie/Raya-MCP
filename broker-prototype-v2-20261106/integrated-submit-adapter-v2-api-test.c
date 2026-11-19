@@ -1508,6 +1508,9 @@ static int test_destroy_ex_reports_effect_and_reconciliation(void) {
 
 static int test_shared_worker_two_adapter_success_then_ack_quarantine(void) {
  raya_managed_worker w;
+ raya_managed_operation *retained;
+ DWORD retained_cause;
+ int retained_stage;
  raya_integrated_submit_adapter a,b;
  raya_dedicated_submitter sa,sb;
  raya_integrated_adapter_api api_a,api_b;
@@ -1584,6 +1587,16 @@ static int test_shared_worker_two_adapter_success_then_ack_quarantine(void) {
  CHECK(w.retained_head->owner.state==RAYA_PIPE_OWNER_RELEASED);
  CHECK(w.retained_head->finalizer.state==RAYA_FINALIZER_RELEASED);
  CHECK(w.integrated.core.outstanding==0 && w.integrated.reserved_slots==0);
+ retained=w.retained_head;
+ retained_cause=retained->first_retain_cause;
+ retained_stage=retained->first_retain_stage;
+ EnterCriticalSection(&w.lock);
+ CHECK(!raya_managed_worker_publish_retained_locked(&w,retained,
+       RAYA_RECOVERY_CAUSE_OWNERSHIP_INVARIANT,RAYA_WORKER_RETAIN_STAGE_POST_TERMINAL));
+ CHECK(w.retained_count==1 && w.retained_head==retained);
+ CHECK(retained->first_retain_cause==retained_cause);
+ CHECK(retained->first_retain_stage==retained_stage);
+ LeaveCriticalSection(&w.lock);
  CHECK(raya_integrated_adapter_destroy(&a));
  CHECK(!raya_integrated_adapter_destroy(&b));
  CHECK(raya_submitter_shutdown(&sa));
