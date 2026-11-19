@@ -63,7 +63,7 @@ try {
     $plainTokenFile = Join-Path $store "panel-token.txt"
     [IO.File]::WriteAllText($plainTokenFile, $plainToken, [Text.Encoding]::ASCII)
     & icacls.exe $plainTokenFile /inheritance:r /grant:r "$($identity):F" | Out-Null
-    $env:PATH = "C:\Program Files\nodejs;" + $env:PATH
+    $env:PATH = (Split-Path $node) + ";" + $env:PATH
     $panelUrl = "http://127.0.0.1:8766/?token=" + $plainToken
 
     if (Test-PanelPort) {
