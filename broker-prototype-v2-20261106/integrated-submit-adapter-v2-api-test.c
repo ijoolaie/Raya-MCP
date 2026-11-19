@@ -1510,7 +1510,8 @@ static int test_shared_worker_two_adapter_success_then_ack_quarantine(void) {
  raya_managed_worker w;
  raya_managed_operation *retained;
  raya_worker_retained_record_v1 worker_inventory[1];
- size_t worker_inventory_count=0;
+ raya_adapter_retained_record_v1 adapter_a_inventory[1],adapter_b_inventory[1];
+ size_t worker_inventory_count=0,adapter_a_inventory_count=0,adapter_b_inventory_count=0;
  DWORD retained_cause;
  int retained_stage;
  raya_integrated_submit_adapter a,b;
@@ -1527,6 +1528,9 @@ static int test_shared_worker_two_adapter_success_then_ack_quarantine(void) {
  HANDLE server_a=INVALID_HANDLE_VALUE,client_a=INVALID_HANDLE_VALUE;
  HANDLE server_b=INVALID_HANDLE_VALUE,client_b=INVALID_HANDLE_VALUE;
  DWORD written=0,deadline;
+ adapter_race_arg a_close_arg; HANDLE a_close_thread=NULL;
+ raya_adapter_destroy_result a_close_result;
+ LONG sa_api_entrants=0,sb_api_entrants=0;
  ZeroMemory(&w,sizeof(w)); ZeroMemory(&a,sizeof(a)); ZeroMemory(&b,sizeof(b));
  ZeroMemory(&sa,sizeof(sa)); ZeroMemory(&sb,sizeof(sb));
  ZeroMemory(&state_a,sizeof(state_a)); ZeroMemory(&state_b,sizeof(state_b));
@@ -1566,6 +1570,28 @@ static int test_shared_worker_two_adapter_success_then_ack_quarantine(void) {
  CHECK(callbacks_a==1);
  CHECK(state_a.worker_close_calls==2 && !state_a.ack_failure_injected);
  CHECK(raya_integrated_adapter_retained_count(&a)==0 && a.active_count==0);
+ /* Hold a real Adapter API entrant so destroy_ex closes admission but
+    returns BUSY without destroying the empty Adapter. */
+ state_a.block_create=TRUE; state_a.fail_create=TRUE;
+ state_a.create_entered=CreateSemaphoreW(NULL,0,1,NULL);
+ state_a.create_release=CreateEventW(NULL,TRUE,FALSE,NULL);
+ CHECK(state_a.create_entered!=NULL && state_a.create_release!=NULL);
+ a_close_arg.adapter=&a; a_close_arg.pipe=server_a;
+ a_close_arg.result=RAYA_ADAPTER_QUEUED;
+ a_close_thread=CreateThread(NULL,0,adapter_race_submit_thread,&a_close_arg,0,NULL);
+ CHECK(a_close_thread!=NULL);
+ CHECK(WaitForSingleObject(state_a.create_entered,5000)==WAIT_OBJECT_0);
+ CHECK(raya_integrated_adapter_destroy_ex(&a,&a_close_result)==RAYA_ADAPTER_DESTROY_BUSY);
+ CHECK(a_close_result.admission_closed==TRUE && a_close_result.entrants==1);
+ CHECK(SetEvent(state_a.create_release));
+ CHECK(WaitForSingleObject(a_close_thread,5000)==WAIT_OBJECT_0);
+ CHECK(a_close_arg.result==RAYA_ADAPTER_REJECTED);
+ CHECK(CloseHandle(a_close_thread)); a_close_thread=NULL;
+ CHECK(a.active_count==0 && a.retained_count==0);
+ CHECK((InterlockedCompareExchange(&a.lifecycle_state,0,0)&0x3fffffff)==0);
+ CHECK((InterlockedCompareExchange(&a.lifecycle_state,0,0)&0x40000000)!=0);
+ CHECK(CloseHandle(state_a.create_entered)); state_a.create_entered=NULL;
+ CHECK(CloseHandle(state_a.create_release)); state_a.create_release=NULL;
  CHECK(raya_integrated_adapter_submit(&b,server_b,RAYA_MANAGED_PIPE_READ,NULL,1,
        completion,(void *)&callbacks_b)==RAYA_ADAPTER_QUEUED);
  CHECK(WriteFile(client_b,"B",1,&written,NULL) && written==1);
@@ -1599,15 +1625,17 @@ static int test_shared_worker_two_adapter_success_then_ack_quarantine(void) {
  CHECK(retained->first_retain_cause==retained_cause);
  CHECK(retained->first_retain_stage==retained_stage);
  LeaveCriticalSection(&w.lock);
- CHECK(raya_integrated_adapter_destroy(&a));
  CHECK(!raya_integrated_adapter_destroy(&b));
  CHECK(raya_submitter_shutdown(&sa));
  CHECK(raya_submitter_join(&sa,5000));
- CHECK(raya_submitter_destroy(&sa));
+ CHECK(raya_submitter_admission_close(&sa,&sa_api_entrants));
+ CHECK(sa_api_entrants==0);
  CHECK(!raya_submitter_shutdown(&sb));
  CHECK(WaitForSingleObject(sb.thread,5000)==WAIT_OBJECT_0);
  CHECK(!raya_submitter_join(&sb,100));
  CHECK(sb.joined==TRUE && sb.thread==NULL);
+ CHECK(raya_submitter_admission_close(&sb,&sb_api_entrants));
+ CHECK(sb_api_entrants==0);
  CHECK(!raya_submitter_destroy(&sb));
  CHECK(!raya_managed_worker_shutdown(&w));
  CHECK(WaitForSingleObject(w.thread,5000)==WAIT_OBJECT_0);
@@ -1628,6 +1656,21 @@ static int test_shared_worker_two_adapter_success_then_ack_quarantine(void) {
  CHECK(worker_inventory[0].adapter_operation_id==1);
  CHECK(worker_inventory[0].first_retain_cause==retained_cause);
  CHECK(worker_inventory[0].first_retain_stage==RAYA_WORKER_RETAIN_STAGE_POST_TERMINAL);
+ CHECK(raya_integrated_adapter_copy_retained_inventory_v1(&a,
+       RAYA_ADAPTER_RETAINED_RECORD_VERSION_1,adapter_a_inventory,1,
+       &adapter_a_inventory_count)==RAYA_RETAINED_INVENTORY_OK);
+ CHECK(adapter_a_inventory_count==0);
+ CHECK(raya_integrated_adapter_copy_retained_inventory_v1(&b,
+       RAYA_ADAPTER_RETAINED_RECORD_VERSION_1,adapter_b_inventory,1,
+       &adapter_b_inventory_count)==RAYA_RETAINED_INVENTORY_OK);
+ CHECK(adapter_b_inventory_count==1);
+ CHECK(adapter_b_inventory[0].struct_size==sizeof(adapter_b_inventory[0]));
+ CHECK(adapter_b_inventory[0].version==RAYA_ADAPTER_RETAINED_RECORD_VERSION_1);
+ CHECK(adapter_b_inventory[0].adapter_instance_id==b.instance_id);
+ CHECK(adapter_b_inventory[0].adapter_operation_id==1);
+ CHECK(adapter_b_inventory[0].first_retain_cause==retained_cause);
+ CHECK(adapter_b_inventory[0].first_retain_stage==RAYA_ADAPTER_RETAIN_STAGE_SUBMITTER_ACK);
+ CHECK(raya_submitter_destroy(&sa));
 #ifdef RAYA_ADAPTER_TESTING
  CHECK(raya_adapter_test_retained_snapshot(&b,adapter_items,2,&adapter_count,worker_items,4,&worker_count)==1);
  CHECK(adapter_count==1 && worker_count==1);
@@ -1646,6 +1689,7 @@ static int test_shared_worker_two_adapter_success_then_ack_quarantine(void) {
  CHECK(worker_items[0].adapter_operation_id==adapter_items[0].stable_operation_id);
  CHECK(worker_items[0].first_retain_stage==RAYA_WORKER_RETAIN_STAGE_POST_TERMINAL);
 #endif
+ CHECK(raya_integrated_adapter_destroy(&a));
  CHECK(!raya_managed_worker_destroy(&w));
  CHECK(state_a.worker_close_handles[0]==NULL && state_a.worker_close_handles[1]==NULL);
  CHECK(state_b.worker_close_handles[0]==NULL && state_b.worker_close_handles[1]==NULL);
