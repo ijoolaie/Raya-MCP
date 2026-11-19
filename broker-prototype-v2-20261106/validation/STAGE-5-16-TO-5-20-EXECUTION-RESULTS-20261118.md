@@ -14,18 +14,11 @@ No production source/header, build script, README, model, configuration, or prod
 
 ## 5.16 — Multiple independent Adapter-associated retained submissions
 
-**Status: BLOCKED / NOT COMPLETE.**
+**Current status: PARTIAL / NOT COMPLETE.** The earlier blocked assessment below is superseded by the 2026-11-19 mixed-stage runtime evidence addendum.
 
-Inspected the existing ACK-failure injection path in `integrated-submit-adapter-v2-api-test.c`.
+Current proven runtime result: two real Adapter-associated retained records from distinct Adapter instances and distinct Worker operation IDs coexist on one shared Worker. Adapter B reaches terminal READ completion and is retained after its Submitter ACK fails (`SUBMITTER_ACK` / Worker `POST_TERMINAL`). After that Worker is degraded, Adapter A's second public submit registers identity but Worker admission rejects; Adapter-local close failure during pre-issue cleanup retains A (`HANDLE_CLOSE_FAILURE` / Worker `ADAPTER_ASSOCIATED`). Production Adapter v1 inventories return A=1 and B=1; production Worker v1 inventory copies both records and validates both identity pairs.
 
-- The fault is injected once at the Submitter ACK signal boundary.
-- The test verifies one real Adapter submission becomes retained.
-- The Submitter is degraded after that failure, so the existing seam does not establish that a second independent Adapter submission can be admitted and retained through the same live Adapter/Submitter.
-- No second record was fabricated or inserted to claim independent submission coverage.
-- A later test-only attempt armed ACK failure on both independent Adapter/Submitter pairs and admitted one real READ through each before completion. Adapter A reached ACK failure; Adapter B remained at one issuer lease with zero Worker handle-close calls, so the shared Worker sequence still produced only one retained record.
-
-A deterministic, ownership-correct second-retention injection seam or a separately supported independent Adapter/Submitter arrangement is still required.
-
+This proves two real Adapter API submissions and two independent Adapter-associated retained records. It does **not** prove two OS-issued operations or two independent post-terminal ACK failures. The stricter dual-ACK scenario remains incomplete; the shared Worker fail-closed DEGRADED sequencing is documented in the dated addenda. No lifecycle bypass, fabricated record, new hook, or Production behavior change is authorized by this evidence.
 ## 5.17 — Actual DIRECT managed-pipe retained path
 
 **Status: COMPLETE for the focused runtime identity assertions.**
@@ -55,14 +48,13 @@ Not established: two distinct runtime operations concurrently retained through s
 
 ## 5.19 — Snapshot consistency
 
-**Status: PARTIALLY COMPLETE; previous coverage retained.**
+**Current status: PARTIAL.** Production copied v1 inventories have now been exercised after their documented quiescence conditions against real retained runtime records:
+- Worker v1 on a real Adapter-associated ACK-quarantined operation.
+- Worker v1 on a real DIRECT READ retained by finalizer close failure.
+- Adapter v1 for both Adapter namespaces in the mixed-stage shared-Worker test (A=1, B=1), with the Worker v1 inventory matching both stable identity pairs.
+- Worker v1 on two real DIRECT retained records from the concurrent degradation / handoff-not-transferred test.
 
-Existing evidence remains:
-- Test-only stable-identity validator covers duplicate identities, epoch consistency, DIRECT and ADAPTER_ASSOCIATED inventory shapes, and Adapter/Worker stable-pair joins.
-- Existing mixed runtime snapshot contains one actual Adapter-associated retained operation and one separately registered/test-published DIRECT operation in the same Worker list.
-
-This pass adds the actual DIRECT I/O retention identity assertions. It does not add two independent Adapter-associated runtime submissions; that remains blocked under 5.16. The mixed test's DIRECT entry is not claimed to be a second real direct I/O submission.
-
+The v1 consistency model is two independent copied per-plane inventories after each plane's own quiescence preconditions; it does not specify an atomic cross-plane snapshot. The test-only validator and runtime evidence remain distinguished. The remaining 5.19 dependency is the stricter 5.16 scenario with two independently OS-issued Adapter-associated operations each reaching post-terminal ACK failure; the mixed-stage result must not be overstated as that scenario.
 ## 5.20 — Recovery/Reconciliation contract
 
 **Status: CONTRACT BASELINE EXISTS; PRODUCTION API CONTRACT/IMPLEMENTATION NOT COMPLETE.**
@@ -104,23 +96,21 @@ The actual production enumeration/reconciliation/release API contract still need
 
 ## Remaining work
 
-1. 5.16: create a deterministic, non-fabricated way to retain two independent Adapter-associated submissions and validate both stable identity pairs in one runtime snapshot.
-2. 5.18: distinct-operation concurrent retention coverage and remaining runtime retain branches are still outstanding. Real Adapter-associated first-retain immutability is now covered for the existing ACK-quarantine path; same-operation duplicate race remains covered.
-3. 5.19: extend actual runtime snapshot coverage after 5.16 is solved; keep synthetic validator coverage distinct from runtime evidence.
-4. 5.20: specify and review the production Recovery/Reconciliation API contract. No release/retry/replay behavior is authorized by the current test-only identity layer.
-5. Only after the above, proceed to positive recovery tests and Stage 5 acceptance.
-
+1. 5.16: the mixed-stage runtime case proves two real Adapter-associated retained records and both identity pairs. Still outstanding: two independently OS-issued Adapter-associated operations each reaching its own post-terminal ACK-failure path. Do not bypass the shared Worker's DEGRADED gate or fabricate a second completion.
+2. 5.18: remains partial. The mixed-stage Adapter admission-rejected / Adapter-local close-failure branch is now covered; distinct-operation concurrent DIRECT retention and the remaining externally inducible runtime retain branches require separate evidence. Invariant-guard primitive contracts are covered by focused component tests; do not manufacture invalid internal state to simulate their runtime failures.
+3. 5.19: production v1 Adapter and Worker inventories are exercised on the real mixed-stage two-record case. Remaining dependency is the stricter 5.16 dual-ACK runtime scenario; no atomic cross-plane API is required by the frozen v1 contract.
+4. 5.20: no safe reconciliation action is approved. Any production recovery/reconciliation API requires a separately approved contract covering authorization, ownership, state transitions, concurrency, and fail-closed behavior. No release/retry/replay behavior is authorized.
+5. Positive recovery tests and Stage 5 acceptance remain blocked until the required design/owner decisions and acceptance evidence exist.
 ## Acceptance
 
-- 5.16: BLOCKED / NOT COMPLETE.
+- 5.16: PARTIAL / NOT COMPLETE — two real mixed-stage Adapter-associated retained records are proven; dual independent post-terminal ACK failures are not.
 - 5.17: focused actual DIRECT retained-path identity assertions PASS.
 - 5.18: PARTIAL.
-- 5.19: PARTIAL.
-- 5.20: existing identity contract baseline; production Recovery/Reconciliation API contract NOT COMPLETE.
+- 5.19: PARTIAL — production per-plane v1 inventories verified on real Adapter and DIRECT retained records, including both mixed-stage Adapter records.
+- 5.20: identity/inventory contract baseline exists; production Recovery/Reconciliation API contract NOT COMPLETE; no reconciliation action approved.
 - Stage 5 implementation/recovery acceptance: BLOCKED / NOT ACCEPTED.
 - Phase 1: NOT ACCEPTED.
 - Production: NO-GO.
-
 ## Addendum — 2026-11-19 real DIRECT first-retain immutability check
 
 Extended the existing real test_close_failure_retention runtime path in managed-pipe-io-v2-native-test.c. After the actual managed-pipe READ reaches Worker retention through the injected second-handle-close failure, the test now attempts a second publication of that same retained operation under the Worker lock using a different cause and POST_TERMINAL stage.
