@@ -391,3 +391,37 @@ Only source-backed, non-mutating contract clarification and negative tests that 
 - Stage 5.20: INCOMPLETE. Stage 5 and Phase 1: NOT ACCEPTED. Production: NO-GO.
 
 Review was documentation-only. No source, header, ABI, test, build script, journal, lifecycle, ownership, cleanup, recovery, retry, callback, replay, or Orchestrator cursor behavior changed. No tests/builds were run. No retained resource was released, modified, retried, replayed, or deleted.
+## Addendum - 2026-11-19 delegated owner decision directions for O-520-1 through O-520-6
+
+The project owner explicitly delegated selection of the six Stage 5.20 decision answers in the conversation dated 2026-11-19, with the constraint that answers follow the repository's safety, ownership, evidence, and staged-delivery principles. The following decisions close the product-direction questions at policy level. They do not waive technical acceptance criteria, authorize a recovery mutation, or grant Production approval.
+
+### Decisions
+
+| ID | Decision | Scope and guardrails |
+|---|---|---|
+| O-520-1 | **ACCEPT** fail-closed quarantine for the remainder of the current process lifetime as an explicit Phase 1 limitation. | This accepts the limitation, not Phase 1 as a whole. It does not authorize generic release, manual close, retry, replay, or reconciliation. Phase 1 remains unaccepted until its other gates, evidence, review, and acceptance criteria pass. |
+| O-520-2 | **BOTH**, as a staged architectural objective: bounded in-process recovery first; restart-surviving recovery only as a later capability after its durable contract is approved and implemented. | Do not conflate the two scopes. No restart recovery is implied by current process-local identities or copied v1 inventories. No current implementation may claim either recovery capability merely from observation APIs. |
+| O-520-3 | **SINGLE, explicit ownership per resource and state; no shared implicit ownership.** Adapter owns its envelope and Adapter-local submission/admission state; Worker owns Worker operation lifecycle, retained Worker records, and Worker-side reservations; Submitter owns its queue/issue/ACK state until the documented transfer/terminal boundary. | The exact resource disposition for each failure class must be mapped to the actual source transition and recorded before any action contract is proposed. A component may release only resources for which it has current, proven ownership; cross-component release requires an explicit, validated ownership transfer. Aggregate counts, IDs, or first-retain metadata are not release authority. Unknown, partial, or conflicting ownership remains quarantined. |
+| O-520-4 | **NO**: durable restart recovery is not a Phase 1 requirement. | Keep the current in-memory WAL codec/scanner as non-durable work; do not add journal file I/O or durable identity as part of this Stage 5.20 decision closure. If restart recovery is later promoted to a product requirement, it requires a separate approved design covering identity namespace, storage and ACL, single-writer/locking, durability boundary, crash consistency, retention/capacity, backup/restore, and failure model. |
+| O-520-5 | **NO automatic replay of uncertain WRITE.** Treat it as permanently non-replayable under the current contract. | A future recipient-level idempotent protocol may be proposed only as a separately approved capability with stable idempotency identity, authenticated recipient receipt/status, verifier trust, and explicit evidence rules. This decision does not authorize implementing that protocol or replay now. |
+| O-520-6 | **Least-privilege, explicitly authorized operational role with auditable, case-specific approval.** | Authorization must be deployment-configured and attributable to a named principal/role; every proposed action needs evidence, reason, and immutable audit record. Any future irreversible release/reconciliation action requires independent approval (two-person control) and a narrowly scoped action contract. No role is currently granted a reconciliation API or action because Gate D has approved none. |
+
+### Consequences and implementation boundary
+
+1. Phase 1 product policy accepts process-lifetime quarantine as a disclosed limitation; this closes the policy choice in O-520-1 only. It does not change the current Stage 5, Phase 1, or Production acceptance status.
+2. The target architecture may account for both in-process and restart-surviving recovery, but implementation is staged. The current Stage 5.20 slice remains limited to source-backed contract clarification, observation, and negative quarantine/no-replay evidence.
+3. O-520-3 is a binding ownership principle, not permission to infer a concrete release action. A failure-class-to-owner/resource matrix must be source-traced before any future reconciliation action can be considered.
+4. O-520-4 explicitly defers durable restart recovery. No WAL file I/O, durable identity allocator, storage/ACL setup, or crash-recovery implementation is authorized by this decision.
+5. O-520-5 preserves the current no-replay rule. No recipient protocol, positive replay test, or uncertain-WRITE resubmission is authorized.
+6. O-520-6 defines the future authorization/audit standard but grants no current operational privilege and does not override Gate D's no-action result.
+
+### Updated decision status
+
+- O-520-1 through O-520-6: **DECIDED at policy level** by delegated project-owner instruction dated 2026-11-19.
+- Gate D: COMPLETE; no evidence-specific reconciliation action approved.
+- Gate E: BLOCKED; positive recovery action/tests remain unauthorized and unsupported by evidence.
+- Gate F: no longer blocked on the O-520-1 policy choice alone; remains subject to all other acceptance evidence, project-owner review of the resulting record, and PR review. This addendum does not declare Gate F passed.
+- Stage 5.20: remains INCOMPLETE until the remaining source-backed work and acceptance evidence are complete.
+- Stage 5 / Phase 1: NOT ACCEPTED pending remaining gates and review. Production: NO-GO.
+
+This is a documentation-only decision record. No source, header, ABI, test, build script, journal, lifecycle, ownership implementation, cleanup, recovery, retry, callback, replay, authorization API, or Orchestrator cursor behavior changed. No tests/builds were run. No retained resource was released, modified, retried, replayed, or deleted.
