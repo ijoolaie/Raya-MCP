@@ -264,11 +264,94 @@ static int test_close_failure_retention(void) {
  CHECK(CloseHandle(callback_event));CHECK(CloseHandle(client));CHECK(CloseHandle(server));
  return 0;
 }
+typedef struct { HANDLE entered; HANDLE release; } handoff_gate;
+typedef struct { raya_managed_worker *worker; HANDLE pipe; handoff_gate *gate; raya_managed_pipe_submit_result result; } pending_submit_attempt;
+typedef struct { HANDLE release; LONG calls; } degrade_close_gate;
+static BOOL cancel_wait_for_degrade(HANDLE pipe,LPOVERLAPPED ov,void *context) {
+ handoff_gate *gate=(handoff_gate *)context;
+ (void)pipe;(void)ov;
+ (void)SetEvent(gate->entered);
+ if(WaitForSingleObject(gate->release,5000)!=WAIT_OBJECT_0) { SetLastError(ERROR_TIMEOUT); return FALSE; }
+ SetLastError(ERROR_NOT_FOUND);return FALSE;
+}
+static BOOL close_fail_first_and_release(HANDLE handle,void *context) {
+ degrade_close_gate *gate=(degrade_close_gate *)context;
+ if(InterlockedIncrement(&gate->calls)==1) {
+  (void)SetEvent(gate->release);SetLastError(ERROR_INVALID_HANDLE);return FALSE;
+ }
+ return CloseHandle(handle);
+}
+static DWORD WINAPI pending_submit_thread(void *parameter) {
+ pending_submit_attempt *attempt=(pending_submit_attempt *)parameter;
+ attempt->result=raya_managed_pipe_submit_with_cancel(attempt->worker,
+     attempt->pipe,RAYA_MANAGED_PIPE_READ,NULL,1,0,0,completed,NULL,
+     cancel_wait_for_degrade,attempt->gate);
+ return 0;
+}
+static int test_handoff_not_transferred_after_concurrent_degradation(void) {
+ HANDLE server_a=INVALID_HANDLE_VALUE,client_a=INVALID_HANDLE_VALUE;
+ HANDLE server_b=INVALID_HANDLE_VALUE,client_b=INVALID_HANDLE_VALUE;
+ HANDLE entered=NULL,release=NULL,thread=NULL;
+ wchar_t name_a[160],name_b[160];raya_managed_worker worker;
+ handoff_gate gate;degrade_close_gate close_gate;pending_submit_attempt attempt;
+ raya_managed_pipe_submit_result first_result;DWORD n=0;
+ raya_worker_retained_record_v1 inventory[2];size_t inventory_count=0,k;
+ int saw_close=0,saw_handoff=0;
+ callback_count=0;callback_error=ERROR_INVALID_FUNCTION;callback_bytes=0;
+ CHECK(make_pipe(&server_a,&client_a,name_a,160));
+ Sleep(10);
+ CHECK(make_pipe(&server_b,&client_b,name_b,160));
+ CHECK(WriteFile(client_a,"A",1,&n,NULL));CHECK(n==1);
+ entered=CreateEventW(NULL,TRUE,FALSE,NULL);CHECK(entered!=NULL);
+ release=CreateEventW(NULL,TRUE,FALSE,NULL);CHECK(release!=NULL);
+ callback_event=CreateEventW(NULL,TRUE,FALSE,NULL);CHECK(callback_event!=NULL);
+ CHECK(raya_managed_worker_start(&worker));
+ gate.entered=entered;gate.release=release;close_gate.release=release;close_gate.calls=0;
+ CHECK(raya_managed_worker_set_close_callback(&worker,close_fail_first_and_release,&close_gate));
+ attempt.worker=&worker;attempt.pipe=server_b;attempt.gate=&gate;attempt.result=RAYA_MANAGED_PIPE_REJECTED;
+ thread=CreateThread(NULL,0,pending_submit_thread,&attempt,0,NULL);CHECK(thread!=NULL);
+ CHECK(WaitForSingleObject(entered,5000)==WAIT_OBJECT_0);
+ first_result=raya_managed_pipe_submit(&worker,server_a,RAYA_MANAGED_PIPE_READ,
+     NULL,1,5000,0,completed,NULL);
+ CHECK(first_result==RAYA_MANAGED_PIPE_RETAINED);
+ CHECK(InterlockedCompareExchange(&close_gate.calls,0,0)==1);
+ CHECK(WaitForSingleObject(thread,5000)==WAIT_OBJECT_0);
+ CHECK(attempt.result==RAYA_MANAGED_PIPE_RETAINED);
+ CHECK(worker.integrated.core.lifecycle==RAYA_REAPER_DEGRADED);
+ CHECK(worker.integrated.core.degradation_causes==
+       (RAYA_RECOVERY_CAUSE_HANDLE_CLOSE|RAYA_RECOVERY_CAUSE_OWNERSHIP_INVARIANT));
+ CHECK(worker.integrated.core.caller_active==0&&worker.integrated.reserved_slots==2);
+ CHECK(worker.retained_count==2);
+ CHECK(!raya_managed_worker_join(&worker,5000));
+ CHECK(worker.joined==TRUE&&worker.thread==NULL);
+ ZeroMemory(inventory,sizeof(inventory));
+ CHECK(raya_managed_worker_copy_retained_inventory_v1(&worker,
+       RAYA_WORKER_RETAINED_RECORD_VERSION_1,inventory,2,&inventory_count)==
+       RAYA_RETAINED_INVENTORY_OK);
+ CHECK(inventory_count==2);
+ for(k=0;k<inventory_count;++k) {
+  CHECK(inventory[k].identity_valid==TRUE);
+  CHECK(inventory[k].inventory_kind==RAYA_WORKER_INVENTORY_DIRECT);
+  CHECK(inventory[k].worker_epoch==worker.worker_epoch);
+  CHECK(inventory[k].worker_operation_id!=0);
+  CHECK(inventory[k].first_retain_stage==RAYA_WORKER_RETAIN_STAGE_DIRECT);
+  if(inventory[k].first_retain_cause==RAYA_RECOVERY_CAUSE_HANDLE_CLOSE) saw_close=1;
+  if(inventory[k].first_retain_cause==RAYA_RECOVERY_CAUSE_OWNERSHIP_INVARIANT) saw_handoff=1;
+ }
+ CHECK(saw_close&&saw_handoff);
+ CHECK(InterlockedCompareExchange(&callback_count,0,0)==0);
+ CHECK(!raya_managed_worker_destroy(&worker));
+ CHECK(CloseHandle(thread));CHECK(CloseHandle(entered));CHECK(CloseHandle(release));
+ CHECK(CloseHandle(callback_event));CHECK(CloseHandle(client_a));CHECK(CloseHandle(server_a));
+ CHECK(CloseHandle(client_b));CHECK(CloseHandle(server_b));
+ return 0;
+}
 static int test_submission_failure(void) {
  HANDLE server=INVALID_HANDLE_VALUE,client=INVALID_HANDLE_VALUE;
  wchar_t name[160];raya_managed_worker worker;
  raya_managed_pipe_submit_result sr;
  callback_count=0;callback_error=ERROR_SUCCESS;callback_bytes=77;
+ Sleep(10);
  CHECK(make_pipe(&server,&client,name,160));
  CHECK(DisconnectNamedPipe(server));
  callback_event=CreateEventW(NULL,TRUE,FALSE,NULL);CHECK(callback_event!=NULL);
@@ -291,6 +374,7 @@ int main(void) {
  if(test_default_cancel_drain())return 1;
  if(test_concurrent_first_retain_publication())return 1;
  if(test_close_failure_retention())return 1;
+ if(test_handoff_not_transferred_after_concurrent_degradation())return 1;
  if(test_submission_failure())return 1;
  (void)printf("Managed pipe I/O: %u assertions, 0 failures\n",checks);
  return 0;
