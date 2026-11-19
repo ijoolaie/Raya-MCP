@@ -39,6 +39,7 @@ static int test_timeout_handoff(void) {
  HANDLE server=INVALID_HANDLE_VALUE,client=INVALID_HANDLE_VALUE;
  wchar_t name[160];raya_managed_worker worker;
  raya_managed_pipe_submit_result sr;DWORD n=0;
+
  callback_count=0;callback_error=ERROR_INVALID_FUNCTION;callback_bytes=0;callback_byte=0;
  CHECK(make_pipe(&server,&client,name,160));
  callback_event=CreateEventW(NULL,TRUE,FALSE,NULL);CHECK(callback_event!=NULL);
@@ -60,6 +61,7 @@ static int test_local_completion(void) {
  HANDLE server=INVALID_HANDLE_VALUE,client=INVALID_HANDLE_VALUE;
  wchar_t name[160];raya_managed_worker worker;
  raya_managed_pipe_submit_result sr;DWORD n=0;
+
  callback_count=0;callback_error=ERROR_INVALID_FUNCTION;callback_bytes=0;callback_byte=0;
  CHECK(make_pipe(&server,&client,name,160));
  CHECK(WriteFile(client,"L",1,&n,NULL));CHECK(n==1);
@@ -204,6 +206,7 @@ static int test_close_failure_retention(void) {
  HANDLE server=INVALID_HANDLE_VALUE,client=INVALID_HANDLE_VALUE;
  wchar_t name[160];raya_managed_worker worker;close_fault fault={0,2};
  raya_managed_pipe_submit_result sr;DWORD n=0;
+ raya_worker_retained_record_v1 inventory[1];size_t inventory_count=0;
  callback_count=0;callback_error=ERROR_INVALID_FUNCTION;callback_bytes=0;
  CHECK(make_pipe(&server,&client,name,160));
  CHECK(WriteFile(client,"F",1,&n,NULL));CHECK(n==1);
@@ -241,7 +244,22 @@ static int test_close_failure_retention(void) {
   CHECK(retained->first_retain_stage==RAYA_WORKER_RETAIN_STAGE_DIRECT);
  }
  CHECK(!raya_managed_worker_join(&worker,5000));
- CHECK(worker.joined==TRUE);
+ CHECK(worker.joined==TRUE && worker.thread==NULL);
+ ZeroMemory(inventory,sizeof(inventory));
+ CHECK(raya_managed_worker_copy_retained_inventory_v1(&worker,
+       RAYA_WORKER_RETAINED_RECORD_VERSION_1,inventory,1,
+       &inventory_count)==RAYA_RETAINED_INVENTORY_OK);
+ CHECK(inventory_count==1);
+ CHECK(inventory[0].struct_size==sizeof(inventory[0]));
+ CHECK(inventory[0].version==RAYA_WORKER_RETAINED_RECORD_VERSION_1);
+ CHECK(inventory[0].identity_valid==TRUE);
+ CHECK(inventory[0].inventory_kind==RAYA_WORKER_INVENTORY_DIRECT);
+ CHECK(inventory[0].worker_epoch==worker.worker_epoch);
+ CHECK(inventory[0].worker_operation_id!=0);
+ CHECK(inventory[0].adapter_identity_valid==FALSE);
+ CHECK(inventory[0].adapter_instance_id==0 && inventory[0].adapter_operation_id==0);
+ CHECK(inventory[0].first_retain_cause==RAYA_RECOVERY_CAUSE_HANDLE_CLOSE);
+ CHECK(inventory[0].first_retain_stage==RAYA_WORKER_RETAIN_STAGE_DIRECT);
  CHECK(!raya_managed_worker_destroy(&worker));
  CHECK(CloseHandle(callback_event));CHECK(CloseHandle(client));CHECK(CloseHandle(server));
  return 0;
