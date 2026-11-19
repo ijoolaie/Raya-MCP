@@ -356,3 +356,38 @@ A fresh review of the 5.20 execution baseline against the frozen v1 inventory co
 This reconciliation supersedes only historical statements in earlier 5.20 design/review documents that production stable identity or read-only enumeration is absent. It does not promote the v1 inventories into a recovery API, approve any reconciliation action, or change the frozen v1 ABI/consistency model.
 
 No source, header, test, build script, ABI, lifecycle, ownership, cleanup, recovery, retry, callback, replay, or Orchestrator cursor behavior changed. No tests/builds were run for this documentation-only reconciliation; previously recorded verification remains as cited in the implementation report. No retained resource was released, modified, retried, replayed, or deleted. Stage 5.20 remains INCOMPLETE; Gate D remains COMPLETE with no action approved; Gate E and Gate F remain BLOCKED; Stage 5/Phase 1 remain NOT ACCEPTED; Production remains NO-GO.
+
+## Addendum - 2026-11-19 Stage 5.20 owner-decision register
+
+This register distinguishes decisions already frozen/implemented from decisions that cannot be inferred from source or test evidence. It records the minimum owner inputs blocking further 5.20 recovery-contract work; it does not choose product policy on the owner's behalf.
+
+### Settled; do not reopen in this slice
+
+- **Read-only inventory shape:** two independent copied inventories (Adapter envelope and Worker operation), caller-established quiescence, bounded caller-owned arrays, no cross-plane atomicity, no side effects. The v1 ABI and implementation are present; this is not a recovery/release surface.
+- **Current uncertain-effect safety rule:** accepted or outcome-unknown I/O, uncertain WRITE, conflicting evidence, partial cross-plane commits, and uncertain close/ownership state remain quarantined. No replay, generic release, blind close retry, callback/ACK retry, or cursor mutation.
+- **Gate D result:** no evidence-specific reconciliation action is currently proven safe or approved. This is a present technical disposition, not a permanent product decision that quarantine must be accepted forever.
+
+### Explicit owner decisions still required
+
+| ID | Decision required | Evidence boundary / consequence if unanswered | Required authority |
+|---|---|---|---|
+| O-520-1 | Accept fail-closed quarantine for the remainder of the process lifetime as an explicit Phase 1 limitation, or decline Phase 1 acceptance. | Gate F cannot pass; Stage 5/Phase 1 remain NOT ACCEPTED. This does not authorize release. | Project owner |
+| O-520-2 | Define the intended recovery scope: in-process local cleanup only, restart-surviving recovery, or both. | Do not design a production reconciliation state machine or claim restart recovery until scope is explicit. Current process-local IDs and v1 inventories are not durable. | Project/product owner |
+| O-520-3 | For each retained failure class, identify the sole resource/state owner and whether any action is ever permitted; explicitly list permanently quarantined classes. | No action API, ownership transfer, unlink, close, free, callback, ACK, or teardown transition can be specified from aggregate counts or first-retain metadata. | Component owners plus project owner |
+| O-520-4 | Decide whether durable restart recovery is a product requirement and, if yes, approve the durable identity namespace, storage/ACL and single-writer model, durability boundary, retention/capacity/backup policy, and supported failure model. | The current WAL work is an in-memory codec/scanner, not an on-disk journal. No durable identity allocator or crash recovery exists; no journal implementation is authorized by this register. | Project owner and deployment/operations owner |
+| O-520-5 | If recipient-level WRITE completion/replay is in scope, name the recipient/protocol owner and approve stable idempotency identity, authenticated receipt/status semantics, verifier trust, and positive/negative evidence rules. Otherwise explicitly keep uncertain WRITE permanently non-replayable. | Local ReadFile/WriteFile acceptance, Worker handoff, local ACK, and process-local inventory do not prove recipient commit. No recipient verifier/status protocol is implemented. | External recipient/protocol owner plus project owner |
+| O-520-6 | Name the authorized operator/role, authorization boundary, audit requirements, and approval process for any future evidence-specific reconciliation action. | No caller authorization or privileged reconciliation action can be safely exposed. A generic release-by-ID remains prohibited. | Security/operations owner plus project owner |
+
+### Work that can proceed without those decisions
+
+Only source-backed, non-mutating contract clarification and negative tests that prove quarantine/no-replay behavior can proceed, provided they use existing supported seams and do not manufacture internal state. The already implemented v1 inventories may be used for observation under their exact quiescence contract. No production recovery behavior, new recovery API, WAL file I/O, durable identity, recipient protocol, positive release test, or Orchestrator recovery cursor work is authorized by this register.
+
+### Current gate result
+
+- O-520-1 through O-520-6: OPEN; no owner approval evidence was found in the reviewed project records.
+- Gate D: COMPLETE; no reconciliation action approved.
+- Gate E: BLOCKED; no safe positive recovery action/test can be specified.
+- Gate F: BLOCKED pending O-520-1 and PR review.
+- Stage 5.20: INCOMPLETE. Stage 5 and Phase 1: NOT ACCEPTED. Production: NO-GO.
+
+Review was documentation-only. No source, header, ABI, test, build script, journal, lifecycle, ownership, cleanup, recovery, retry, callback, replay, or Orchestrator cursor behavior changed. No tests/builds were run. No retained resource was released, modified, retried, replayed, or deleted.
