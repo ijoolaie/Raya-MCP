@@ -334,3 +334,13 @@ After both Adapter admission gates are closed, both Submitters are quiesced, and
 - 5.20: incomplete; no reconciliation action is approved and no recovery/release/retry/replay API is authorized.
 - Gate D remains complete with no action approved; Gate E and Gate F remain blocked.
 - Phase 1 remains NOT ACCEPTED; Production remains NO-GO.
+## Addendum — 2026-11-19 Stage 5.18 existing-seam revalidation
+
+Re-read the exact production call ordering in `managed-pipe-io-v2.c` (`discard_unissued`, submit admission through reserve) and `integrated-submit-adapter-v2.c` (`adapter_submit_impl`, Worker admission through reserve), together with the public injected API declarations in `integrated-submit-adapter-v2.h`.
+
+Findings:
+- DIRECT: `discard_unissued` is entered only after `raya_managed_worker_reserve` returns false. The direct submission path has no injected `create_event`, `duplicate_handle`, or I/O callback; these are direct Win32 calls. Its existing close callback runs only after the reserve rejection has already happened, so it can inject cleanup-close failure but cannot deterministically cause the prerequisite reserve rejection. Concurrent shutdown/degradation in the narrow admit/register-to-reserve interval remains a timing race, not a supported deterministic seam.
+- Adapter: `create_event` and `duplicate_handle` callbacks occur before Worker admission; `read_file` / `write_file` occur after reserve/enqueue; `close_handle` is reached on cleanup after a failure. None provides a barrier between successful `raya_managed_worker_admit` and `raya_managed_worker_reserve`. A concurrent lifecycle transition could theoretically reject reserve, but the existing API callbacks cannot deterministically coordinate that interval.
+- Existing Adapter admission-rejected close-failure coverage is a different branch: it fails at Worker admission, not reserve. Existing DIRECT handoff-not-transferred coverage is also distinct from `discard_unissued`.
+
+Decision: no additional runtime test can be added for either exact reserve-failure branch using only the currently supported deterministic seams. Do not add timing stress, mutate Worker lifecycle/accounting state, or introduce a new production/test hook merely to force the branch. A future deterministic test would require an explicitly approved seam/barrier at the admission-to-reserve boundary; adding one is outside this evidence-only pass and would require separate review. No source, header, API, test, build script, ownership, lifecycle, cleanup, or recovery behavior changed. No tests were rerun or newly claimed. Stage 5.18 remains PARTIAL; Stage 5.16 and 5.19 remain PARTIAL; Stage 5.20 remains incomplete; Stage 5 acceptance remains BLOCKED / NOT ACCEPTED; Phase 1 NOT ACCEPTED; Production NO-GO.
