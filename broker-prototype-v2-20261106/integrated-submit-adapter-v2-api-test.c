@@ -24,6 +24,9 @@ typedef struct {
  BOOL degrade_after_read_accept;
  raya_managed_worker *degrade_worker;
  BOOL fail_ack_signal;
+ BOOL arm_not_issued_signal;
+ BOOL fail_not_issued_signal;
+ BOOL not_issued_failure_injected;
  BOOL arm_ack_on_worker_close;
  BOOL ack_failure_injected;
  BOOL ack_fail_wake;
@@ -140,7 +143,10 @@ static BOOL WINAPI test_read(HANDLE pipe,LPVOID buffer,DWORD length,
  api_state *s=(api_state *)context;
  BOOL ok;
  InterlockedIncrement(&s->read_calls);
- if (s->fail_read) { SetLastError(ERROR_BROKEN_PIPE); return FALSE; }
+ if (s->fail_read) {
+  if (s->arm_not_issued_signal) s->fail_not_issued_signal=TRUE;
+  SetLastError(ERROR_BROKEN_PIPE); return FALSE;
+ }
  ok=ReadFile(pipe,buffer,length,transferred,ov);
  if (ok) InterlockedIncrement(&s->sync_success);
  else {
@@ -175,6 +181,13 @@ static BOOL WINAPI test_submitter_set_event(HANDLE event_handle) {
  size_t i;
  for(i=0;i<4;++i) {
   api_state *s=g_ack_states[i];
+   if (s && s->fail_not_issued_signal && s->submitter!=NULL &&
+       event_handle==s->submitter->changed_event) {
+    s->fail_not_issued_signal=FALSE;
+    s->not_issued_failure_injected=TRUE;
+    SetLastError(ERROR_INVALID_HANDLE);
+    return FALSE;
+   }
   if (s && s->fail_ack_signal && s->submitter!=NULL &&
       s->submitter->issuer_leases==0 &&
       event_handle==(s->ack_fail_wake ? s->submitter->wake_event :
@@ -1704,8 +1717,64 @@ static int test_adapter_reserve_rejection_cleanup(void) {
  CHECK(raya_submitter_destroy(&s)); CHECK(raya_managed_worker_destroy(&w));
  CHECK(CloseHandle(client)); CHECK(CloseHandle(server)); return 0;
 }
+static int test_adapter_not_issued_notification_failure(void) {
+ raya_integrated_submit_adapter a; raya_dedicated_submitter s; raya_managed_worker w;
+ api_state state; volatile LONG callbacks=0;
+ HANDLE server=INVALID_HANDLE_VALUE,client=INVALID_HANDLE_VALUE;
+ raya_submitter_lifecycle lifecycle=RAYA_SUBMITTER_RUNNING;
+ size_t queued=0,producers=0,active=0,leases=0;
+ ZeroMemory(&state,sizeof(state)); state.fail_read=TRUE;
+ state.arm_not_issued_signal=TRUE;
+ server=CreateNamedPipeW(L"\\\\.\\pipe\\raya-not-issued-notification-fail",
+     PIPE_ACCESS_DUPLEX|FILE_FLAG_OVERLAPPED,
+     PIPE_TYPE_BYTE|PIPE_READMODE_BYTE|PIPE_WAIT,1,4096,4096,0,NULL);
+ CHECK(server!=INVALID_HANDLE_VALUE);
+ client=CreateFileW(L"\\\\.\\pipe\\raya-not-issued-notification-fail",
+     GENERIC_READ|GENERIC_WRITE,0,NULL,OPEN_EXISTING,0,NULL);
+ CHECK(client!=INVALID_HANDLE_VALUE);
+ CHECK(setup_ack_failure(&a,&s,&w,&state));
+ CHECK(raya_integrated_adapter_submit(&a,server,RAYA_MANAGED_PIPE_READ,NULL,1,
+     completion,(void *)&callbacks)==RAYA_ADAPTER_QUEUED);
+ {
+  DWORD deadline=GetTickCount()+5000;
+  while ((!state.not_issued_failure_injected || callbacks==0 ||
+          !raya_submitter_snapshot(&s,&lifecycle,&queued,&producers,&active,&leases) ||
+          lifecycle!=RAYA_SUBMITTER_DEGRADED) &&
+         (LONG)(deadline-GetTickCount())>0) Sleep(1);
+ }
+ CHECK(state.read_calls==1 && state.not_issued_failure_injected==TRUE);
+ CHECK(state.fail_not_issued_signal==FALSE);
+ CHECK(callbacks==1 && state.close_calls==2);
+ CHECK(raya_submitter_snapshot(&s,&lifecycle,&queued,&producers,&active,&leases));
+ CHECK(lifecycle==RAYA_SUBMITTER_DEGRADED);
+ CHECK(queued==0 && producers==0 && active==0 && leases==0);
+ CHECK(s.degraded_reason==RAYA_SUBMITTER_DEGRADED_REASON_NOTIFICATION);
+ CHECK(s.degraded_request_id==1);
+ CHECK(s.degraded_issue_effect==RAYA_SUBMITTER_EFFECT_NOT_ATTEMPTED);
+ CHECK(s.degraded_publish_effect==RAYA_SUBMITTER_EFFECT_NOT_ATTEMPTED);
+ CHECK(raya_integrated_adapter_retained_count(&a)==0 && a.active_count==0);
+ CHECK(w.retained_count==0 && w.integrated.core.lifecycle==RAYA_REAPER_ACCEPTING);
+ CHECK(w.integrated.core.caller_active==0 && w.integrated.core.outstanding==0);
+ CHECK(w.integrated.reserved_slots==0 && w.integrated.registry.count==0);
+ CHECK(WaitForSingleObject(s.thread,5000)==WAIT_OBJECT_0);
+ CHECK(raya_integrated_adapter_destroy(&a));
+ CHECK(raya_managed_worker_shutdown(&w));
+ CHECK(raya_managed_worker_join(&w,5000));
+ CHECK(raya_managed_worker_destroy(&w));
+ unregister_ack_state(&state);
+ unregister_worker_close_state(&state);
+ CHECK(CloseHandle(client)); CHECK(CloseHandle(server));
+ /* The degraded Submitter has no public destroy/recovery contract.
+    Its thread has exited; process exit reclaims remaining process-local resources. */
+ return 0;
+}
 #endif
 int main(int argc,char **argv) {
+ if (argc==2 && strcmp(argv[1],"--not-issued-notification")==0) {
+  int result=test_adapter_not_issued_notification_failure();
+  printf("NOT_ISSUED notification isolation: %ld assertions %s\n",checks,result?"FAIL":"PASS");
+  return result;
+ }
  if (argc==2 && strcmp(argv[1],"--strict-dual-ack")==0) {
   int result=test_shared_worker_strict_dual_ack_quarantine();
   printf("strict dual ACK isolation: %ld assertions %s\n",checks,result?"FAIL":"PASS");

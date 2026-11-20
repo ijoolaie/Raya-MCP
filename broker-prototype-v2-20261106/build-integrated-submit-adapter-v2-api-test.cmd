@@ -7,6 +7,8 @@ if errorlevel 1 goto :failed
 for /L %%i in (1,1,10) do (
  integrated-submit-adapter-v2-api-test.exe --strict-dual-ack
  if errorlevel 1 goto :failed
+ integrated-submit-adapter-v2-api-test.exe --not-issued-notification
+ if errorlevel 1 goto :failed
  integrated-submit-adapter-v2-api-test.exe
  if errorlevel 1 goto :failed
 )

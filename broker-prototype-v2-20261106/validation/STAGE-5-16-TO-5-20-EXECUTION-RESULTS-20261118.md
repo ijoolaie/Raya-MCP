@@ -596,7 +596,7 @@ Validation:
 |---|---|---|
 | Stage 5.16 | **COMPLETE** for the unchanged strict dual-post-terminal-ACK criterion in the broker-prototype branch. | No Stage 5.16 strict runtime gap remains in this bounded criterion. Production wiring is not authorized. |
 | Stage 5.19 | **COMPLETE** within the frozen v1 contract: independent per-plane copied inventories after each plane's quiescence preconditions. The strict scenario proves two Worker v1 records and one Adapter v1 record for each Adapter, with matching identity pairs. | No atomic cross-plane snapshot is required or claimed. |
-| Stage 5.18 | PARTIAL. | Deterministic DIRECT/Adapter reserve-rejection branches and remaining runtime invariant-guard evidence gaps remain. |
+| Stage 5.18 | PARTIAL. | DIRECT/Adapter reserve-rejection and combined Adapter+Submitter NOT_ISSUED notification-failure branches now have deterministic runtime evidence. Worker-level retained-inventory publication for native WAIT_FAILED/Core wake-failure scenarios remains unproven; invariant-guard runtime fault injection is intentionally excluded because it requires manufactured internal corruption. |
 | Stage 5.20 | INCOMPLETE. | Production per-record effect/receipt evidence and safe reconciliation contract remain absent; no positive action is approved. |
 | Gate D / E / F | D COMPLETE / NO ACTION APPROVED; E BLOCKED; F pending explicit owner acceptance and PR review. | Positive recovery remains unauthorized; full Phase 1 acceptance is not met. |
 
@@ -619,3 +619,28 @@ Validation:
 - git diff --check PASS.
 
 Stage 5.18 is now COMPLETE for the two exact reserve-rejection cleanup branches (DIRECT discard_unissued and Adapter reserve-rejection cleanup). Stage 5.18 overall remains PARTIAL because runtime injection of each ownership-invariant guard and the combined Adapter+Submitter NOT_ISSUED notification-failure fixture remain unresolved. Stage 5.16 remains COMPLETE for the strict dual-post-terminal-ACK criterion; Stage 5.19 remains COMPLETE within the frozen independent per-plane v1 inventory contract; Stage 5.20 remains INCOMPLETE. Gate D remains NO ACTION APPROVED; Gate E BLOCKED; Gate F pending full Stage 5/Phase 1 owner acceptance and PR review. Stage 5/Phase 1 remain NOT ACCEPTED; Production remains NO-GO. No retained record was released, unlinked, replayed, reconciled, or freed by a recovery action.
+
+## 2026-11-20 owner-approved process-isolated Adapter NOT_ISSUED notification-failure runtime test
+
+The project owner explicitly approved a process-isolated test strategy for the combined Adapter + Submitter NOT_ISSUED notification-failure case, subject to build-artifact cleanup after testing. This supersedes the earlier feasibility decision that rejected relying on process exit without owner approval.
+
+Added test_adapter_not_issued_notification_failure to integrated-submit-adapter-v2-api-test.c, selected by --not-issued-notification. The test uses only the existing injected Adapter/Submitter API tables; no Production source, header, ABI, callback, lifecycle, or recovery hook was added. The existing SetEvent test selector gained a separate NOT_ISSUED-specific arm: the injected ReadFile failure arms the selector, and the Submitter changed-event failure is injected only after the real issue callback has returned NOT_ACCEPTED and the request has transitioned to NOT_ISSUED. The Submitter's actual not_issued callback runs before the failed notification.
+
+Assertions prove:
+- Exactly one real ReadFile attempt and one targeted changed-event notification failure.
+- Submitter lifecycle is DEGRADED for NOTIFICATION, request ID is 1, issue/publish effects are both NOT_ATTEMPTED, and queue/producer/active-issue/issuer-lease counts are all zero.
+- Adapter callback is delivered exactly once; both Adapter-owned handles are closed; Adapter active/retained counts are zero.
+- Worker remains ACCEPTING with caller-active, outstanding, reserved, registry, and retained counts all zero.
+- Submitter thread has exited. Adapter is destroyed through its public API; Worker is shut down, joined, and destroyed through public APIs.
+- No internal structure is zeroed, no Submitter-owned handle is manually closed, no destroy/recovery contract is bypassed, and no retained record is freed or reconciled.
+
+The deliberately DEGRADED Submitter has no supported public destroy/recovery contract. Its thread is observed exited; the dedicated test process then terminates, allowing the OS to reclaim only that fixture's remaining process-local Submitter handles/storage. This is the explicitly approved isolation boundary, not a Production teardown/recovery behavior. Each invocation is a separate process.
+
+The prescribed build-integrated-submit-adapter-v2-api-test.cmd now runs the new process-isolated mode once per each of its 10 iterations, alongside the existing strict dual-ACK process and full regression suite. Validation with Visual Studio 2026 BuildTools 18.7.3 x64 and /W4 /WX:
+- NOT_ISSUED notification isolation: 10 process runs × 25 assertions = 250 assertions, all PASS.
+- Strict dual-ACK isolation: 10 process runs × 120 assertions, all PASS.
+- Full API regression: 10 runs × 1,081 assertions across 68 cases, all PASS.
+- Build script cleanup completed; no .exe or .obj artifacts remain.
+- git diff --check PASS.
+
+This closes the previously split end-to-end Adapter+Submitter NOT_ISSUED notification-failure evidence gap. Stage 5.18 remains PARTIAL: the remaining bounded evidence gap is Worker-level retained-inventory publication for the native WAIT_FAILED/Core wake-failure scenarios; Core/queue quarantine tests do not by themselves prove Worker retained-list publication. Runtime fault injection for invariant guards remains intentionally excluded because it requires manufactured internal ownership/counter corruption; the primitive rejection/non-mutation contracts are covered by focused component tests. No Production behavior, positive recovery, retry, replay, retained-record release, or reconciliation was introduced. Stage 5.16 and 5.19 remain COMPLETE within their recorded strict/frozen criteria; Stage 5.20 remains INCOMPLETE; Gate D NO ACTION APPROVED; Gate E BLOCKED; Gate F pending full owner acceptance and PR review; Stage 5/Phase 1 NOT ACCEPTED; Production NO-GO.
