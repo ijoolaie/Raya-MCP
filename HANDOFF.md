@@ -1335,7 +1335,7 @@ Evidence and results: `broker-prototype-v2-20261106/validation/STAGE-5-16-TO-5-2
 
 - Stage 5.16: COMPLETE for the unchanged strict criterion.
 - Stage 5.19: COMPLETE within the frozen v1 independent per-plane inventory contract; no atomic cross-plane snapshot is claimed.
-- Stage 5.18: PARTIAL; DIRECT discard_unissued, Adapter reserve-rejection cleanup, and combined Adapter+Submitter NOT_ISSUED notification failure are runtime-covered. Worker-level retained-inventory publication for native WAIT_FAILED/Core wake-failure scenarios remains open; invariant-guard runtime fault injection is intentionally excluded as manufactured internal corruption.
+- Stage 5.18: PARTIAL; DIRECT discard_unissued, Adapter reserve-rejection cleanup, and combined Adapter+Submitter NOT_ISSUED notification failure are runtime-covered. Existing Worker wake-failure test confirms a transferred-but-unprocessed operation remains Adapter-retained and Worker-queued/reserved but absent from Worker retained inventory (confirmed gap). Managed Worker-level native WAIT_FAILED runtime evidence needs a test-only wait seam; no such seam is yet authorized. Invariant-guard runtime fault injection is intentionally excluded as manufactured internal corruption.
 - Stage 5.20: INCOMPLETE; Gate D remains NO ACTION APPROVED, Gate E BLOCKED.
 - Gate F remains pending full Stage 5/Phase 1 owner acceptance and PR review. Stage 5/Phase 1 remain NOT ACCEPTED; Production remains NO-GO.
 
