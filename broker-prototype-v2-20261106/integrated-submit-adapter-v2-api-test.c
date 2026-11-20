@@ -1656,12 +1656,65 @@ static int test_shared_worker_strict_dual_ack_quarantine(void) {
  CHECK(CloseHandle(client_b)); CHECK(CloseHandle(server_b));
  return 0;
 }
+#ifdef RAYA_ADAPTER_TESTING
+typedef struct { volatile LONG calls; } reserve_barrier_state;
+static void test_shutdown_before_reserve(raya_managed_worker *worker,
+    raya_managed_operation *op,void *context) {
+ reserve_barrier_state *state=(reserve_barrier_state *)context;
+ (void)op; InterlockedIncrement(&state->calls);
+ (void)raya_managed_worker_shutdown(worker);
+}
+static int test_direct_reserve_rejection_cleanup(void) {
+ raya_managed_worker w; reserve_barrier_state barrier; volatile LONG callbacks=0;
+ HANDLE server=INVALID_HANDLE_VALUE,client=INVALID_HANDLE_VALUE;
+ ZeroMemory(&barrier,sizeof(barrier)); ZeroMemory(&w,sizeof(w));
+ server=CreateNamedPipeW(L"\\\\.\\pipe\\raya-direct-reserve-reject",
+     PIPE_ACCESS_DUPLEX|FILE_FLAG_OVERLAPPED,PIPE_TYPE_BYTE|PIPE_READMODE_BYTE|PIPE_WAIT,1,4096,4096,0,NULL);
+ CHECK(server!=INVALID_HANDLE_VALUE);
+ client=CreateFileW(L"\\\\.\\pipe\\raya-direct-reserve-reject",GENERIC_READ|GENERIC_WRITE,0,NULL,OPEN_EXISTING,0,NULL);
+ CHECK(client!=INVALID_HANDLE_VALUE); CHECK(raya_managed_worker_start(&w));
+ CHECK(raya_managed_worker_set_before_reserve_test_hook(&w,test_shutdown_before_reserve,&barrier));
+ CHECK(raya_managed_pipe_submit(&w,server,RAYA_MANAGED_PIPE_READ,NULL,1,100,100,completion,(void *)&callbacks)==RAYA_MANAGED_PIPE_REJECTED);
+ CHECK(barrier.calls==1); CHECK(raya_managed_worker_join(&w,5000)); CHECK(w.integrated.core.lifecycle==RAYA_REAPER_STOPPED);
+ CHECK(w.integrated.core.caller_active==0 && w.integrated.core.outstanding==0);
+ CHECK(w.integrated.reserved_slots==0 && w.integrated.registry.count==0);
+ CHECK(callbacks==0 && w.retained_count==0);
+ CHECK(raya_managed_worker_destroy(&w));
+ CHECK(CloseHandle(client)); CHECK(CloseHandle(server)); return 0;
+}
+static int test_adapter_reserve_rejection_cleanup(void) {
+ raya_integrated_submit_adapter a; raya_dedicated_submitter s; raya_managed_worker w;
+ api_state state; reserve_barrier_state barrier; volatile LONG callbacks=0;
+ HANDLE server=INVALID_HANDLE_VALUE,client=INVALID_HANDLE_VALUE;
+ ZeroMemory(&state,sizeof(state)); ZeroMemory(&barrier,sizeof(barrier));
+ server=CreateNamedPipeW(L"\\\\.\\pipe\\raya-adapter-reserve-reject",
+     PIPE_ACCESS_DUPLEX|FILE_FLAG_OVERLAPPED,PIPE_TYPE_BYTE|PIPE_READMODE_BYTE|PIPE_WAIT,1,4096,4096,0,NULL);
+ CHECK(server!=INVALID_HANDLE_VALUE);
+ client=CreateFileW(L"\\\\.\\pipe\\raya-adapter-reserve-reject",GENERIC_READ|GENERIC_WRITE,0,NULL,OPEN_EXISTING,0,NULL);
+ CHECK(client!=INVALID_HANDLE_VALUE); CHECK(setup(&a,&s,&w,&state));
+ CHECK(raya_managed_worker_set_before_reserve_test_hook(&w,test_shutdown_before_reserve,&barrier));
+ CHECK(raya_integrated_adapter_submit(&a,server,RAYA_MANAGED_PIPE_READ,NULL,1,completion,(void *)&callbacks)==RAYA_ADAPTER_REJECTED);
+ CHECK(barrier.calls==1); CHECK(raya_managed_worker_join(&w,5000)); CHECK(w.integrated.core.lifecycle==RAYA_REAPER_STOPPED);
+ CHECK(w.integrated.core.caller_active==0 && w.integrated.core.outstanding==0);
+ CHECK(w.integrated.reserved_slots==0 && w.integrated.registry.count==0);
+ CHECK(w.retained_count==0 && a.retained_count==0 && a.active_count==0);
+ CHECK(callbacks==0 && state.close_calls==2);
+ CHECK(raya_integrated_adapter_destroy(&a));
+ CHECK(raya_submitter_shutdown(&s)); CHECK(raya_submitter_join(&s,5000));
+ CHECK(raya_submitter_destroy(&s)); CHECK(raya_managed_worker_destroy(&w));
+ CHECK(CloseHandle(client)); CHECK(CloseHandle(server)); return 0;
+}
+#endif
 int main(int argc,char **argv) {
  if (argc==2 && strcmp(argv[1],"--strict-dual-ack")==0) {
   int result=test_shared_worker_strict_dual_ack_quarantine();
   printf("strict dual ACK isolation: %ld assertions %s\n",checks,result?"FAIL":"PASS");
   return result;
  }
+#ifdef RAYA_ADAPTER_TESTING
+ if (test_direct_reserve_rejection_cleanup()) return 1;
+ if (test_adapter_reserve_rejection_cleanup()) return 1;
+#endif
  if (test_worker_retained_identity_publication_contract()) return 1;
 #ifdef RAYA_ADAPTER_TESTING
  if (test_retained_snapshot_validator()) return 1;

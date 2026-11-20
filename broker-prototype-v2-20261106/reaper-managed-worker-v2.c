@@ -358,6 +358,20 @@ int raya_managed_worker_set_wake_callback(raya_managed_worker *w,
 #endif
 
 #ifdef RAYA_ADAPTER_TESTING
+int raya_managed_worker_set_before_reserve_test_hook(raya_managed_worker *w,
+    raya_managed_before_reserve_test_fn hook, void *context) {
+    int ok=0;
+    if (w==NULL || !w->initialized) return 0;
+    EnterCriticalSection(&w->lock);
+    if (w->integrated.core.lifecycle==RAYA_REAPER_ACCEPTING &&
+        w->integrated.core.caller_active==0 && w->integrated.core.outstanding==0 &&
+        w->integrated.reserved_slots==0 && w->integrated.registry.count==0) {
+        w->before_reserve_test=hook; w->before_reserve_test_context=context; ok=1;
+    }
+    LeaveCriticalSection(&w->lock);
+    return ok;
+}
+
 int raya_managed_worker_set_lifecycle_api(raya_managed_worker *w,
     raya_managed_wait_fn wait_fn, raya_managed_exit_code_fn exit_code_fn,
     raya_managed_lifecycle_close_fn close_fn, void *context) {
@@ -428,6 +442,10 @@ int raya_managed_worker_reserve(raya_managed_worker *w,
     raya_managed_operation *op) {
     int ok;
     if (w == NULL || op == NULL || !w->initialized) return 0;
+#ifdef RAYA_ADAPTER_TESTING
+    if (w->before_reserve_test != NULL)
+        w->before_reserve_test(w,op,w->before_reserve_test_context);
+#endif
     EnterCriticalSection(&w->lock);
     ok = raya_reaper_integrated_reserve(&w->integrated, &op->integrated);
     LeaveCriticalSection(&w->lock);

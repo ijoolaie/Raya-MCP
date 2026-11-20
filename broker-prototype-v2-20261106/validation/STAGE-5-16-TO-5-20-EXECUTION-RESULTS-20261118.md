@@ -601,3 +601,21 @@ Validation:
 | Gate D / E / F | D COMPLETE / NO ACTION APPROVED; E BLOCKED; F pending explicit owner acceptance and PR review. | Positive recovery remains unauthorized; full Phase 1 acceptance is not met. |
 
 Stage 5/Phase 1 remain NOT ACCEPTED. Production remains NO-GO. The implementation is confined to the broker-prototype branch and does not authorize Production wiring, reconciliation/release, retry, replay, callback redelivery, or changes to the Phase 1 recovery policy.
+
+## 2026-11-20 deterministic DIRECT and Adapter reserve-rejection runtime coverage (Stage 5.18)
+
+Following explicit project-owner authorization, added a narrowly scoped RAYA_ADAPTER_TESTING-only callback at the shared raya_managed_worker_reserve boundary. The callback executes immediately before the real reserve predicate and outside the Worker lock. The focused test callback invokes the existing public Worker shutdown API, deterministically transitioning ACCEPTING to STOPPING after the caller has been admitted/registered but before reserve. The production reserve function then rejects for its existing lifecycle predicate; no counters, operation state, registry entries, or reservation state are mutated by the test hook.
+
+Two end-to-end named-pipe runtime tests were added to integrated-submit-adapter-v2-api-test.c:
+- DIRECT: successful admission/registration, deterministic shutdown at the pre-reserve boundary, actual reserve rejection, discard_unissued, successful finalizer close/commit, caller-finish, callback suppression, zero retained records, zero caller-active/outstanding/reserved/registry counts, Worker join and Destroy.
+- Adapter: successful Worker and Submitter admission, deterministic shutdown at the same pre-reserve boundary, actual reserve rejection, Submitter admission abort, caller submission failure, both owned-handle closes, finalizer commit, owner release, Worker finish, Adapter/Submitter/Worker orderly teardown, callback suppression, and zero retained/active/reserved/outstanding/registry state.
+
+The hook type, storage, setter, and invocation are all compiled only under RAYA_ADAPTER_TESTING; no Production ABI, lifecycle, ownership, cleanup, or recovery behavior is changed. The prescribed API build script now enables that existing test macro and includes managed-pipe-io-v2.c for the DIRECT test. The script's cleanup list includes the additional object file.
+
+Validation:
+- API test build /W4 /WX: 10 strict dual-ACK process runs × 120 assertions and 10 full API-suite runs × 1,081 assertions across 68 cases; all PASS.
+- Existing non-test-macro Managed Pipe native build /W4 /WX: 10 runs × 176 assertions; all PASS. This confirms the production compilation path excludes the test-only hook cleanly.
+- Both build scripts completed their cleanup; declared EXE/OBJ outputs were absent after execution.
+- git diff --check PASS.
+
+Stage 5.18 is now COMPLETE for the two exact reserve-rejection cleanup branches (DIRECT discard_unissued and Adapter reserve-rejection cleanup). Stage 5.18 overall remains PARTIAL because runtime injection of each ownership-invariant guard and the combined Adapter+Submitter NOT_ISSUED notification-failure fixture remain unresolved. Stage 5.16 remains COMPLETE for the strict dual-post-terminal-ACK criterion; Stage 5.19 remains COMPLETE within the frozen independent per-plane v1 inventory contract; Stage 5.20 remains INCOMPLETE. Gate D remains NO ACTION APPROVED; Gate E BLOCKED; Gate F pending full Stage 5/Phase 1 owner acceptance and PR review. Stage 5/Phase 1 remain NOT ACCEPTED; Production remains NO-GO. No retained record was released, unlinked, replayed, reconciled, or freed by a recovery action.

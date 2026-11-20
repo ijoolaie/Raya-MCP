@@ -23,6 +23,7 @@ typedef DWORD (WINAPI *raya_managed_wait_fn)(HANDLE handle, DWORD timeout_ms, vo
 typedef BOOL (WINAPI *raya_managed_exit_code_fn)(HANDLE thread, LPDWORD exit_code, void *context);
 typedef BOOL (WINAPI *raya_managed_lifecycle_close_fn)(HANDLE handle, void *context);
 typedef int (*raya_managed_handoff_degraded_fn)(raya_managed_operation *op, void *context);
+typedef void (*raya_managed_before_reserve_test_fn)(raya_managed_worker *worker, raya_managed_operation *op, void *context);
 #endif
 
 typedef enum {
@@ -114,6 +115,8 @@ struct raya_managed_worker {
     raya_managed_exit_code_fn lifecycle_exit_code;
     raya_managed_lifecycle_close_fn lifecycle_close;
     void *lifecycle_api_context;
+    raya_managed_before_reserve_test_fn before_reserve_test;
+    void *before_reserve_test_context;
 #endif
     BOOL initialized;
     BOOL started;
@@ -142,6 +145,8 @@ int raya_managed_worker_set_wake_callback(raya_managed_worker *worker,
 int raya_managed_worker_set_lifecycle_api(raya_managed_worker *worker,
     raya_managed_wait_fn wait_fn, raya_managed_exit_code_fn exit_code_fn,
     raya_managed_lifecycle_close_fn close_fn, void *context);
+int raya_managed_worker_set_before_reserve_test_hook(raya_managed_worker *worker,
+    raya_managed_before_reserve_test_fn hook, void *context);
 /* Test-only: publish Adapter quarantine while Worker lock still protects handoff. */
 raya_managed_handoff_result raya_managed_worker_handoff_with_hook(
     raya_managed_worker *worker, raya_managed_operation *op,

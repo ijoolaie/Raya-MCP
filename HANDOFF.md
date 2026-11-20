@@ -1335,7 +1335,7 @@ Evidence and results: `broker-prototype-v2-20261106/validation/STAGE-5-16-TO-5-2
 
 - Stage 5.16: COMPLETE for the unchanged strict criterion.
 - Stage 5.19: COMPLETE within the frozen v1 independent per-plane inventory contract; no atomic cross-plane snapshot is claimed.
-- Stage 5.18: PARTIAL; reserve-rejection and invariant-guard evidence gaps remain.
+- Stage 5.18: PARTIAL; DIRECT discard_unissued and Adapter reserve-rejection cleanup are now runtime-covered; invariant-guard injection and combined NOT_ISSUED notification-failure evidence remain.
 - Stage 5.20: INCOMPLETE; Gate D remains NO ACTION APPROVED, Gate E BLOCKED.
 - Gate F remains pending full Stage 5/Phase 1 owner acceptance and PR review. Stage 5/Phase 1 remain NOT ACCEPTED; Production remains NO-GO.
 
