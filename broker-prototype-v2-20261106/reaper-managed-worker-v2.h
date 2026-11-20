@@ -20,6 +20,7 @@ typedef BOOL (WINAPI *raya_managed_get_overlapped_result_fn)(
 #ifdef RAYA_ADAPTER_TESTING
 typedef BOOL (WINAPI *raya_managed_set_event_fn)(HANDLE event_handle, void *context);
 typedef DWORD (WINAPI *raya_managed_wait_fn)(HANDLE handle, DWORD timeout_ms, void *context);
+typedef BOOL (*raya_managed_wait_failure_test_fn)(DWORD *error, void *context);
 typedef BOOL (WINAPI *raya_managed_exit_code_fn)(HANDLE thread, LPDWORD exit_code, void *context);
 typedef BOOL (WINAPI *raya_managed_lifecycle_close_fn)(HANDLE handle, void *context);
 typedef int (*raya_managed_handoff_degraded_fn)(raya_managed_operation *op, void *context);
@@ -111,6 +112,8 @@ struct raya_managed_worker {
 #ifdef RAYA_ADAPTER_TESTING
     raya_managed_set_event_fn set_wake_event;
     void *wake_event_context;
+    raya_managed_wait_failure_test_fn wait_failure_test;
+    void *wait_failure_test_context;
     raya_managed_wait_fn lifecycle_wait;
     raya_managed_exit_code_fn lifecycle_exit_code;
     raya_managed_lifecycle_close_fn lifecycle_close;
@@ -141,6 +144,9 @@ int raya_managed_worker_set_close_callback(raya_managed_worker *worker,
 /* Test-only: configure wake signaling before any work is admitted. */
 int raya_managed_worker_set_wake_callback(raya_managed_worker *worker,
     raya_managed_set_event_fn set_event, void *context);
+/* Test-only: inject only WAIT_FAILED at the real Managed Worker wait boundary. */
+int raya_managed_worker_start_with_wait_failure_test_hook(raya_managed_worker *worker,
+    raya_managed_wait_failure_test_fn wait_failure_test, void *context);
 /* Test-only lifecycle API seam. Configure after start, before shutdown/join. */
 int raya_managed_worker_set_lifecycle_api(raya_managed_worker *worker,
     raya_managed_wait_fn wait_fn, raya_managed_exit_code_fn exit_code_fn,

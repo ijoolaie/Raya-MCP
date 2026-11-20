@@ -151,6 +151,7 @@ static BOOL WINAPI test_read(HANDLE pipe,LPVOID buffer,DWORD length,
  if (ok) InterlockedIncrement(&s->sync_success);
  else {
   DWORD error=GetLastError();
+  s->read_error=error;
   if (error==ERROR_IO_PENDING && s->degrade_after_read_accept &&
       s->degrade_worker!=NULL) {
    EnterCriticalSection(&s->degrade_worker->lock);
@@ -216,6 +217,14 @@ static raya_submitter_win32_api make_submitter_api(void) {
  return api;
 }
 #ifdef RAYA_ADAPTER_TESTING
+typedef struct { volatile LONG calls; HANDLE entered; } wait_failure_state;
+static BOOL test_worker_wait_failure(DWORD *error,void *context) {
+ wait_failure_state *state=(wait_failure_state *)context;
+ LONG call=InterlockedIncrement(&state->calls);
+ if(call==1) { SetEvent(state->entered); return FALSE; }
+ *error=ERROR_INVALID_HANDLE;
+ return TRUE;
+}
 static BOOL WINAPI test_worker_set_event(HANDLE event_handle,void *context) {
  api_state *s=(api_state *)context;
  InterlockedIncrement(&s->worker_wake_calls);
@@ -1360,6 +1369,66 @@ static int test_worker_retained_identity_publication_contract(void) {
  return 0;
 }
 #ifdef RAYA_ADAPTER_TESTING
+static int test_managed_worker_wait_failed_retains_live_operation(void) {
+ raya_integrated_submit_adapter a; raya_dedicated_submitter s; raya_managed_worker w;
+ api_state state; wait_failure_state wait_state; volatile LONG callbacks=0;
+ HANDLE server=INVALID_HANDLE_VALUE,client=INVALID_HANDLE_VALUE;
+ raya_submitter_lifecycle submitter_lifecycle=RAYA_SUBMITTER_RUNNING;
+ size_t queued=0,producers=0,active=0,leases=0;
+ raya_managed_operation *queued_op;
+ DWORD deadline;
+ ZeroMemory(&state,sizeof(state)); ZeroMemory(&wait_state,sizeof(wait_state));
+ wait_state.entered=CreateEventW(NULL,TRUE,FALSE,NULL);
+ CHECK(wait_state.entered!=NULL); server=CreateNamedPipeW(L"\\\\.\\pipe\\raya-managed-wait-failed",
+     PIPE_ACCESS_DUPLEX|FILE_FLAG_OVERLAPPED,
+     PIPE_TYPE_BYTE|PIPE_READMODE_BYTE|PIPE_WAIT,1,4096,4096,0,NULL);
+ CHECK(server!=INVALID_HANDLE_VALUE);
+ client=CreateFileW(L"\\\\.\\pipe\\raya-managed-wait-failed",
+     GENERIC_READ|GENERIC_WRITE,0,NULL,OPEN_EXISTING,0,NULL);
+ CHECK(client!=INVALID_HANDLE_VALUE);
+ ZeroMemory(&s,sizeof(s)); ZeroMemory(&w,sizeof(w)); ZeroMemory(&a,sizeof(a));
+ CHECK(raya_managed_worker_start_with_wait_failure_test_hook(
+       &w,test_worker_wait_failure,&wait_state));
+ CHECK(WaitForSingleObject(wait_state.entered,5000)==WAIT_OBJECT_0);
+ {
+  raya_integrated_adapter_api api=make_api(&state);
+  CHECK(raya_integrated_adapter_start_with_api(&a,&s,&w,4,&api));
+ }
+ CHECK(raya_integrated_adapter_submit(&a,server,RAYA_MANAGED_PIPE_READ,NULL,1,
+       completion,(void *)&callbacks)==RAYA_ADAPTER_QUEUED);
+ deadline=GetTickCount()+5000;
+ while (WaitForSingleObject(w.thread,0)!=WAIT_OBJECT_0 &&
+        (LONG)(deadline-GetTickCount())>0) Sleep(1);
+ CHECK(WaitForSingleObject(w.thread,0)==WAIT_OBJECT_0);
+ CHECK(wait_state.calls==2);
+ CHECK(state.read_calls==1 && state.read_error==ERROR_IO_PENDING);
+ CHECK(w.integrated.core.lifecycle==RAYA_REAPER_DEGRADED);
+ CHECK(w.integrated.core.degradation_causes==RAYA_RECOVERY_CAUSE_WAIT_FAILED);
+ CHECK(!raya_managed_worker_join(&w,5000));
+ CHECK(w.joined==TRUE && w.thread==NULL && w.thread_exit_code==ERROR_INVALID_HANDLE);
+ CHECK(w.integrated.core.caller_active==0);
+ CHECK(w.integrated.core.queued==0 && w.integrated.core.outstanding==1);
+ CHECK(w.integrated.reserved_slots==1 && w.integrated.registry.count==1);
+ CHECK(w.integrated.core.head==NULL);
+ queued_op=(raya_managed_operation *)w.integrated.registry.entries[0].op;
+ CHECK(queued_op->owner.state==RAYA_PIPE_OWNER_REAPER_PENDING);
+ CHECK(queued_op->integrated.collect_state==RAYA_INTEGRATED_COLLECT_PENDING);
+ CHECK(queued_op->buffer!=NULL && queued_op->buffer_length==1);
+ CHECK(queued_op->issuing_pipe!=NULL && queued_op->issuing_pipe!=INVALID_HANDLE_VALUE);
+ { DWORD flags=0; CHECK(GetHandleInformation(queued_op->issuing_pipe,&flags));
+   CHECK(GetHandleInformation(queued_op->integrated.completion_event,&flags)); }
+ CHECK(queued_op->overlapped.hEvent==queued_op->integrated.completion_event);
+ CHECK(w.retained_count==0 && w.retained_head==NULL);
+ CHECK(a.active_count==1 && a.retained_count==0 && a.retained_head==NULL);
+ CHECK(callbacks==0);
+ CHECK(raya_submitter_snapshot(&s,&submitter_lifecycle,&queued,&producers,&active,&leases));
+ CHECK(submitter_lifecycle==RAYA_SUBMITTER_RUNNING);
+ CHECK(queued==0 && producers==0 && active==0 && leases==1);
+ /* The queue/registry-owned operation and its resources remain untouched until this
+    dedicated process exits; no Adapter/Submitter/Worker teardown is attempted. */
+ (void)client; (void)server;
+ return 0;
+}
 static int test_worker_wake_failure_transferred_untracked(void) {
  raya_integrated_submit_adapter a; raya_dedicated_submitter s; raya_managed_worker w;
  api_state state; volatile LONG callbacks=0;
@@ -1773,6 +1842,11 @@ int main(int argc,char **argv) {
  if (argc==2 && strcmp(argv[1],"--not-issued-notification")==0) {
   int result=test_adapter_not_issued_notification_failure();
   printf("NOT_ISSUED notification isolation: %ld assertions %s\n",checks,result?"FAIL":"PASS");
+  return result;
+ }
+ if (argc==2 && strcmp(argv[1],"--managed-worker-wait-failed")==0) {
+  int result=test_managed_worker_wait_failed_retains_live_operation();
+  printf("Managed Worker WAIT_FAILED isolation: %ld assertions %s\n",checks,result?"FAIL":"PASS");
   return result;
  }
  if (argc==2 && strcmp(argv[1],"--strict-dual-ack")==0) {

@@ -87,7 +87,11 @@ static BOOL signal_wake_locked(raya_managed_worker *w) {
 }
 static int managed_worker_start_internal(raya_managed_worker *w,
     raya_managed_thread_factory_fn factory, void *factory_context,
-    raya_managed_get_overlapped_result_fn get_result, void *completion_context) {
+    raya_managed_get_overlapped_result_fn get_result, void *completion_context
+#ifdef RAYA_ADAPTER_TESTING
+    , raya_managed_wait_failure_test_fn wait_failure_test, void *wait_failure_test_context
+#endif
+    ) {
     if (w == NULL || factory == NULL || get_result == NULL) return 0;
     memset(w, 0, sizeof(*w));
     if (!InitializeCriticalSectionEx(&w->lock, 0, 0)) return 0;
@@ -116,6 +120,8 @@ static int managed_worker_start_internal(raya_managed_worker *w,
 #ifdef RAYA_ADAPTER_TESTING
     w->set_wake_event = default_set_wake_event;
     w->wake_event_context = NULL;
+    w->wait_failure_test = wait_failure_test;
+    w->wait_failure_test_context = wait_failure_test_context;
     w->lifecycle_wait = default_lifecycle_wait;
     w->lifecycle_exit_code = default_lifecycle_exit_code;
     w->lifecycle_close = default_lifecycle_close;
@@ -320,23 +326,45 @@ raya_retained_inventory_status raya_managed_worker_copy_retained_inventory_v1(
 }
 
 int raya_managed_worker_start(raya_managed_worker *w) {
+#ifdef RAYA_ADAPTER_TESTING
+    return managed_worker_start_internal(w, default_thread_factory, NULL,
+        default_get_overlapped_result, NULL, NULL, NULL);
+#else
     return managed_worker_start_internal(w, default_thread_factory, NULL,
         default_get_overlapped_result, NULL);
+#endif
 }
 
 int raya_managed_worker_start_with_completion_api(raya_managed_worker *w,
     raya_managed_get_overlapped_result_fn get_result, void *context) {
+#ifdef RAYA_ADAPTER_TESTING
+    return managed_worker_start_internal(w, default_thread_factory, NULL,
+        get_result, context, NULL, NULL);
+#else
     return managed_worker_start_internal(w, default_thread_factory, NULL,
         get_result, context);
+#endif
 }
 
 int raya_managed_worker_start_with_factory(raya_managed_worker *w,
     raya_managed_thread_factory_fn factory, void *context) {
+#ifdef RAYA_ADAPTER_TESTING
+    return managed_worker_start_internal(w, factory, context,
+        default_get_overlapped_result, NULL, NULL, NULL);
+#else
     return managed_worker_start_internal(w, factory, context,
         default_get_overlapped_result, NULL);
+#endif
 }
 
 #ifdef RAYA_ADAPTER_TESTING
+int raya_managed_worker_start_with_wait_failure_test_hook(raya_managed_worker *w,
+    raya_managed_wait_failure_test_fn wait_failure_test, void *context) {
+    if (wait_failure_test == NULL) return 0;
+    return managed_worker_start_internal(w, default_thread_factory, NULL,
+        default_get_overlapped_result, NULL, wait_failure_test, context);
+}
+
 int raya_managed_worker_set_wake_callback(raya_managed_worker *w,
     raya_managed_set_event_fn set_event, void *context) {
     int ok = 0;
@@ -560,9 +588,21 @@ static DWORD WINAPI managed_worker_main(void *parameter) {
         LeaveCriticalSection(&w->lock);
 
 #ifdef RAYA_ADAPTER_TESTING
-        /* Test-only finite wait: independently observe a missed wake signal. */
-        wr = WaitForMultipleObjects(plan.waitset.handle_count,
-            plan.waitset.handles, FALSE, 100);
+        if (w->wait_failure_test != NULL) {
+            DWORD injected_error = ERROR_GEN_FAILURE;
+            if (w->wait_failure_test(&injected_error,
+                    w->wait_failure_test_context)) {
+                SetLastError(injected_error);
+                wr = WAIT_FAILED;
+            } else {
+                wr = WaitForMultipleObjects(plan.waitset.handle_count,
+                    plan.waitset.handles, FALSE, INFINITE);
+            }
+        } else {
+            /* Test-only finite wait: independently observe a missed wake signal. */
+            wr = WaitForMultipleObjects(plan.waitset.handle_count,
+                plan.waitset.handles, FALSE, 100);
+        }
 #else
         wr = WaitForMultipleObjects(plan.waitset.handle_count,
             plan.waitset.handles, FALSE, INFINITE);

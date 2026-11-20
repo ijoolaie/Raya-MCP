@@ -9,6 +9,8 @@ for /L %%i in (1,1,10) do (
  if errorlevel 1 goto :failed
  integrated-submit-adapter-v2-api-test.exe --not-issued-notification
  if errorlevel 1 goto :failed
+ integrated-submit-adapter-v2-api-test.exe --managed-worker-wait-failed
+ if errorlevel 1 goto :failed
  integrated-submit-adapter-v2-api-test.exe
  if errorlevel 1 goto :failed
 )
