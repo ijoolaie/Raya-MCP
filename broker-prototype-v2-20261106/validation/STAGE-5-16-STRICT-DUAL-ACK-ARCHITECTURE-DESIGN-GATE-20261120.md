@@ -112,3 +112,45 @@ A separate dispatcher could move ACK calls out of the Worker callback, but it ad
 ### Current disposition
 
 Candidate A is the next source/design feasibility target, not an approved architecture. No code, header, ABI, test hook, lifecycle, ownership, recovery, or Production behavior changed in this review. No tests/builds were run. The strict dual-ACK criterion remains unchanged; Stage 5.16/5.19 remain PARTIAL and Production remains NO-GO.
+
+### Addendum - same-Adapter in-flight admission boundary review
+
+A further source trace checked whether closing the Adapter gate can prevent same-Adapter work from slipping past the ACK failure:
+
+- `raya_integrated_adapter_submit` acquires an Adapter API entrant before entering `adapter_submit_impl`; the interlocked high bit prevents later entrants, while already-counted entrants may continue (`integrated-submit-adapter-v2.c:32-45, 551-560`).
+- The submit path orders Worker admission, Submitter admission, Worker reservation, then Submitter enqueue (`integrated-submit-adapter-v2.c:437-499`).
+- Submitter admission accepts only lifecycle RUNNING (`dedicated-io-submitter-v2.c:264-280`); enqueue accepts RUNNING or STOPPING but not DEGRADED (`:282-307`). Therefore an entrant that has not yet been admitted when ACK failure degrades the Submitter cannot gain a new Submitter admission. An entrant admitted earlier but not yet enqueued will have enqueue rejected; it then follows the existing abort/NOT_ISSUED cleanup path, whose failures must continue to quarantine/degrade the Worker.
+- Work already enqueued/issued before the ACK failure is different: it is already committed and cannot be withdrawn by closing the Adapter gate. It remains subject to its existing Worker completion and one ACK attempt; any failure must retain its own envelope. No cancellation, replay, or cleanup shortcut is implied.
+- `adapter_destroy_ex` closes the gate before checking entrants/active/retained state, but it combines closure with destruction and is explicitly caller-serialized. A close-only operation must report the pre-existing entrant count and leave Adapter storage/lock intact; it must not destroy, drain, or free anything.
+
+This narrows the race but does not close the proof obligation. The future close-only API must be linearized against `adapter_enter`; the test must hold an entrant at each meaningful boundary (before Submitter admission, after admission/before enqueue, and after enqueue/issue) and assert only the documented outcome. If an already-issued same-Adapter request remains, it must be allowed only through the existing terminal path and its exact ACK result; no new issue may occur after Submitter DEGRADED. Any cleanup failure in a pre-issue entrant remains a Worker-level failure and must stop the Worker.
+
+### Candidate A proposed state contract and strict acceptance test
+
+The following is a review proposal only; it is not an implementation contract yet.
+
+| Plane | Normal state | On a post-terminal ACK failure for Adapter A | Required invariant |
+|---|---|---|---|
+| Adapter A | Admission open; active envelopes tracked | Admission closes; failed envelope moves to retained inventory | No new A API entrants; existing entrants drain only through already-defined outcomes; retained envelope is never freed |
+| Submitter A | RUNNING | Preserve its exact failure state (DEGRADED for notification failure) | No second ACK; no issue/replay of queued uncertain work |
+| Worker shared by A and B | ACCEPTING | Remains ACCEPTING only if terminal release and retained-record publication both succeeded | Worker continues only for independent operations; any Worker-level failure or failed retention publication still degrades it |
+| Adapter A envelope | Active, Worker-terminal-released | Retained at SUBMITTER_ACK / POST_TERMINAL with immutable identity/cause | Callback suppressed; no release/free/retry/replay |
+| Worker inventory | No record for this operation | One matching post-terminal record | Record pointer remains valid for Worker lifetime; nonempty inventory blocks Worker Destroy |
+
+The same transition must occur independently for Adapter B. The exception is limited to an already-terminal operation whose only remaining failure is its Submitter ACK result. It must not cover uncertain OS issue, uncertain completion, finalizer/handle close, Worker accounting, or retention-publication failure.
+
+#### Deterministic acceptance scenario
+
+1. Start one shared Worker and two independent Adapter/Submitter pairs.
+2. Submit two real named-pipe operations, one through each Adapter. Prove both have been accepted by the OS and handed to the same Worker before either ACK failure is induced.
+3. Arm one exact ACK-notification failure for each Submitter using the existing per-Submitter event-handle dispatcher; do not use a timing race or a shared global selector.
+4. Allow operation A to reach real terminal completion. Verify its ACK fails once, A's envelope is retained in Adapter A and Worker inventory, Adapter A admission closes, Submitter A is DEGRADED for the injected notification failure, and the shared Worker has not become DEGRADED.
+5. Allow operation B to reach real terminal completion on that same Worker. Verify its independent ACK fails once and B is retained with its own identity pair; Submitter B degrades independently.
+6. Verify exactly two distinct OS-issued operations, two terminal completions, two distinct Adapter identity pairs, two POST_TERMINAL Worker records, one retained record per Adapter, no callback delivery, no ACK retry, no close retry, no free, no I/O replay, and no mutation of retained evidence.
+7. Negative controls: a Worker finalizer/close failure, uncertain completion, failed Worker retained publication, or Worker accounting invariant must still degrade the Worker and stop further completion dispatch.
+
+The test must not treat a request as OS-issued merely because it was Adapter-submitted or Worker-admitted. It must use observable evidence from the real Issue callback/OS result path and exact stable identities.
+
+#### Test-fixture teardown gate
+
+The expected successful acceptance result deliberately leaves two retained Adapter envelopes and two Worker retained records. Current public Adapter/Worker/Submitter Destroy contracts reject these states; they do not provide a safe cleanup route. Therefore the test cannot call Destroy, manually close handles, zero structures, free retained envelopes, or pretend the retained records were reconciled. Before implementing this test, the project must approve either (a) a narrow test-fixture lifecycle contract that preserves and safely disposes the process-isolated fixture, or (b) an explicitly process-isolated test executable whose process boundary is part of the test contract. This test teardown decision is independent of the Production quarantine policy.
