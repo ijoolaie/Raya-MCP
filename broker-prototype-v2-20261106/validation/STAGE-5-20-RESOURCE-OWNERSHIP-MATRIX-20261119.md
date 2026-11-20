@@ -236,3 +236,7 @@ Disposition: uncovered under the current test contract. No new hook, timing stre
 ## 2026-11-20 Stage 5.16 dependency decision cross-reference
 
 The strict dual-post-terminal-ACK criterion remains an explicit architecture/acceptance decision for the project owner; see `STAGE-5-16-TO-5-20-EXECUTION-RESULTS-20261118.md`, section `2026-11-20 Stage 5.16 / 5.19 architecture acceptance decision required`. Current single-threaded synchronous Worker release semantics quarantine and degrade the shared Worker on the first ACK failure, preventing a second completion from reaching its post-terminal ACK path. Stage 5.19 remains dependent on this unresolved 5.16 criterion. No new cross-plane atomic snapshot requirement, architecture change, or recovery permission is introduced.
+
+## 2026-11-20 Stage 5.16 strict-criterion owner decision
+
+The owner selected preservation of the strict dual-post-terminal-ACK criterion. The architecture-design work item may investigate independent ACK-failure isolation on the same shared Worker, but no architecture has been selected and no implementation or Production behavior change is authorized. Ownership of queued terminal notifications, Adapter/Worker retained evidence, Submitter ACK state, and shutdown/join/destroy must be resolved before implementation. See STAGE-5-16-STRICT-DUAL-ACK-ARCHITECTURE-DESIGN-GATE-20261120.md. This decision does not authorize retry, release, replay, forced teardown, or positive reconciliation; Gate D remains NO ACTION APPROVED.
