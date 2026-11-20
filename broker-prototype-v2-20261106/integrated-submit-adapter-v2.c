@@ -286,11 +286,14 @@ static int adapter_quarantine_transferred_degraded(
  raya_integrated_submit_adapter *a;
  raya_managed_worker *w;
  raya_adapter_envelope *item;
+ raya_reaper_op *queued_item,*queue_tail=NULL;
+ size_t queue_count=0;
+ BOOL operation_is_queued=FALSE;
  if (!e || !op || op!=&e->operation || !e->adapter) return 0;
  a=e->adapter;
  w=a->worker;
- /* Worker lock is already held. Validate the exact committed queue-owned operation
-    before publishing it into the independent test quarantine registry. */
+ /* Worker lock is already held. Validate the complete bounded queue and find
+    this exact operation at any position before publishing its envelope. */
  if (!w || !w->initialized || !op->identity_valid ||
      op->worker_epoch==0 || op->worker_epoch!=w->worker_epoch ||
      op->worker_operation_id==0 ||
@@ -300,14 +303,23 @@ static int adapter_quarantine_transferred_degraded(
      op->adapter_operation_id!=e->operation_id ||
      !e->worker_admitted || e->retained || e->quarantined ||
      op->integrated.base.state!=RAYA_REAPER_OP_QUEUED ||
-     w->integrated.core.head!=&op->integrated.base ||
-     w->integrated.core.queued!=1 ||
-     w->integrated.core.outstanding!=1 ||
+     w->integrated.core.queued==0 ||
+     w->integrated.core.outstanding<w->integrated.core.queued ||
      w->integrated.core.caller_active!=0 ||
-     w->integrated.reserved_slots!=1 ||
-     w->integrated.registry.count!=0 ||
+     w->integrated.reserved_slots<w->integrated.core.queued ||
      op->owner.state!=RAYA_PIPE_OWNER_REAPER_QUEUED ||
      op->integrated.collect_state!=RAYA_INTEGRATED_COLLECT_PENDING)
+  return 0;
+ for (queued_item=w->integrated.core.head;
+      queued_item!=NULL && queue_count<w->integrated.core.queued;
+      queued_item=queued_item->next) {
+  if (queued_item->state!=RAYA_REAPER_OP_QUEUED) return 0;
+  if (queued_item==&op->integrated.base) operation_is_queued=TRUE;
+  queue_tail=queued_item;
+  ++queue_count;
+ }
+ if (queued_item!=NULL || queue_count!=w->integrated.core.queued ||
+     queue_tail!=w->integrated.core.tail || !operation_is_queued)
   return 0;
  EnterCriticalSection(&a->lock);
  /* Test-only deterministic failure before any quarantine mutation. */

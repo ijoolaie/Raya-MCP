@@ -36,6 +36,7 @@ typedef struct {
  volatile LONG wait_failure_injected;
  BOOL fail_worker_wake;
  BOOL suppress_first_worker_wake;
+ BOOL fail_worker_wake_after_first;
  volatile LONG worker_wake_calls;
  HANDLE worker_wake_event;
  raya_dedicated_submitter *submitter;
@@ -240,7 +241,8 @@ static BOOL WINAPI test_worker_set_event(HANDLE event_handle,void *context) {
  LONG call=InterlockedIncrement(&s->worker_wake_calls);
  if (event_handle==s->worker_wake_event && s->suppress_first_worker_wake && call==1)
   return TRUE; /* Test-only lost wake: report success without SetEvent. */
- if (s->fail_worker_wake && event_handle==s->worker_wake_event) {
+ if (s->fail_worker_wake && (!s->fail_worker_wake_after_first || call>1) &&
+      event_handle==s->worker_wake_event) {
   s->fail_worker_wake=FALSE;
   SetLastError(ERROR_INVALID_HANDLE);
   return FALSE;
@@ -1532,12 +1534,13 @@ static int test_multi_operation_wake_failure_rejected(void) {
  raya_integrated_submit_adapter a; raya_dedicated_submitter s; raya_managed_worker w;
  api_state state; wait_failure_state wait_state; volatile LONG callbacks=0;
  HANDLE server=INVALID_HANDLE_VALUE,client=INVALID_HANDLE_VALUE;
- DWORD deadline; raya_managed_operation *first,*second; raya_adapter_result second_result; BOOL first_queue_ok,second_queue_ok;
+ DWORD deadline; raya_managed_operation *first,*second; raya_adapter_result second_result; BOOL first_queue_ok,second_queue_ok; raya_adapter_test_quarantine_item quarantine_item[1]; size_t quarantine_count=0;
  ZeroMemory(&state,sizeof(state)); ZeroMemory(&wait_state,sizeof(wait_state));
  wait_state.entered=CreateEventW(NULL,TRUE,FALSE,NULL);
  wait_state.release=CreateEventW(NULL,TRUE,FALSE,NULL);
  CHECK(wait_state.entered!=NULL && wait_state.release!=NULL);
- state.suppress_first_worker_wake=TRUE; state.fail_worker_wake=TRUE;
+ state.suppress_first_worker_wake=FALSE; state.fail_worker_wake=TRUE;
+ state.fail_worker_wake_after_first=TRUE;
  server=CreateNamedPipeW(L"\\\\.\\pipe\\raya-adapter-multi-wake-fail",
      PIPE_ACCESS_DUPLEX|FILE_FLAG_OVERLAPPED,PIPE_TYPE_BYTE|PIPE_READMODE_BYTE|PIPE_WAIT,
      1,4096,4096,0,NULL);
@@ -1574,7 +1577,7 @@ static int test_multi_operation_wake_failure_rejected(void) {
  second=(first!=NULL)?(raya_managed_operation *)first->integrated.base.next:NULL;
  second_queue_ok=(w.integrated.core.lifecycle==RAYA_REAPER_DEGRADED &&
      (w.integrated.core.degradation_causes & RAYA_RECOVERY_CAUSE_WAKE_SIGNAL)!=0 &&
-     (w.integrated.core.degradation_causes & RAYA_RECOVERY_CAUSE_OWNERSHIP_INVARIANT)!=0 &&
+     (w.integrated.core.degradation_causes & RAYA_RECOVERY_CAUSE_OWNERSHIP_INVARIANT)==0 &&
      w.integrated.core.queued==2 && w.integrated.core.outstanding==2 &&
      w.integrated.core.caller_active==0 && w.integrated.reserved_slots==2 &&
      first!=NULL && first->integrated.base.state==RAYA_REAPER_OP_QUEUED &&
@@ -1584,9 +1587,15 @@ static int test_multi_operation_wake_failure_rejected(void) {
      first->owner.state==RAYA_PIPE_OWNER_REAPER_QUEUED &&
      second->owner.state==RAYA_PIPE_OWNER_REAPER_QUEUED);
  LeaveCriticalSection(&w.lock);
- CHECK(state.fail_worker_wake==FALSE && state.suppress_first_worker_wake==TRUE);
+ CHECK(state.fail_worker_wake==FALSE && state.suppress_first_worker_wake==FALSE);
  CHECK(second_queue_ok);
- CHECK(a.quarantine_count==0 && a.quarantine_head==NULL);
+ CHECK(a.quarantine_count==1 && a.quarantine_head!=NULL);
+  CHECK(raya_adapter_test_quarantine_snapshot(&a,quarantine_item,1,&quarantine_count)==1);
+  CHECK(quarantine_count==1);
+  CHECK(quarantine_item[0].operation_address==(uintptr_t)second);
+  CHECK(quarantine_item[0].adapter_instance_id==a.instance_id);
+  CHECK(quarantine_item[0].adapter_operation_id==2);
+  CHECK(quarantine_item[0].degradation_cause==RAYA_RECOVERY_CAUSE_WAKE_SIGNAL);
  CHECK(a.active_count==2 && callbacks==0);
  CHECK(w.retained_count==0 && w.retained_head==NULL && w.integrated.registry.count==0);
  CHECK(SetEvent(wait_state.release));
