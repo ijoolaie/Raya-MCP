@@ -206,7 +206,7 @@ Gate 1 is PASS for the audited source/lock and test-only callback contract. This
 # Stage 5.18 — Gate 2 deterministic test-only quarantine publication
 
 Date: 2026-11-20
-Status: PARTIAL — positive atomic-publication prototype evidence passed; publication-failure negative case and production implementation remain outstanding.
+Status: PARTIAL — positive atomic-publication prototype evidence passed; multi-operation contention and production implementation remain outstanding.
 
 ## Scope
 
@@ -254,12 +254,12 @@ Non-test-macro compatibility:
 | Queue/outstanding/reservation/owner/collection preservation | PASS |
 | Worker and Adapter v1 retained inventories remain empty for this operation | PASS |
 | Adapter Destroy rejects quarantine-only state | PASS |
-| Negative publication-failure test | NOT RUN |
+| Negative publication-failure test | PASS - isolated, fail-before-mutation hook |
 | Full multi-operation/worker-contention stress matrix | NOT RUN |
 | Production registry and versioned diagnostics | NOT IMPLEMENTED |
 | Bounded production Worker wait | NOT IMPLEMENTED |
 
-**Gate 2 remains PARTIAL.** The positive test-only atomic publication seam is proven for the single-operation deterministic wake-failure fixture. Before production design acceptance, add a deterministic publication-failure negative test, broaden queue membership validation beyond a single queue head, and complete the bounded-wait and versioned-diagnostic gates. Do not reinterpret this test-only registry as production ownership/recovery support.
+**Gate 2 remains PARTIAL.** The positive test-only atomic publication seam is proven for the single-operation deterministic wake-failure fixture. Before production design acceptance, broaden queue membership validation beyond a single queue head and add multi-operation/Worker-contention coverage, broaden queue membership validation beyond a single queue head, and complete the bounded-wait and versioned-diagnostic gates. Do not reinterpret this test-only registry as production ownership/recovery support.
 
 No retained record was released, unlinked, replayed, ACKed or reconciled. No Production behavior, ABI, or v1 inventory semantics changed.
 
