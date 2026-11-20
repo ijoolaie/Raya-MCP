@@ -76,6 +76,7 @@ typedef struct {
  volatile LONG lifecycle_state; /* high bit closes admission; low bits count API entrants */
 #ifdef RAYA_ADAPTER_TESTING
  BOOL test_signal_worker_wake_on_quarantine;
+ BOOL test_fail_quarantine_publication;
  raya_adapter_envelope *quarantine_head;
  size_t quarantine_count;
 #endif
@@ -168,4 +169,3 @@ int raya_adapter_test_retained_snapshot(raya_integrated_submit_adapter *adapter,
   raya_adapter_test_quarantine_item *items,size_t capacity,size_t *count);
 #endif
 #endif
-

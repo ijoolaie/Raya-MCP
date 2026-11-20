@@ -1429,7 +1429,7 @@ static int test_managed_worker_wait_failed_retains_live_operation(void) {
  (void)client; (void)server;
  return 0;
 }
-static int test_worker_wake_failure_transferred_quarantined(void) {
+static int test_worker_wake_failure_transferred_quarantined(BOOL fail_publication) {
  raya_integrated_submit_adapter a; raya_dedicated_submitter s; raya_managed_worker w;
  api_state state; volatile LONG callbacks=0;
  HANDLE server=INVALID_HANDLE_VALUE,client=INVALID_HANDLE_VALUE;
@@ -1452,6 +1452,7 @@ static int test_worker_wake_failure_transferred_quarantined(void) {
  CHECK(client!=INVALID_HANDLE_VALUE);
  CHECK(setup(&a,&s,&w,&state));
  a.test_signal_worker_wake_on_quarantine=TRUE;
+ a.test_fail_quarantine_publication=fail_publication;
  state.worker_wake_event=w.wake_event;
  CHECK(raya_managed_worker_set_wake_callback(&w,test_worker_set_event,&state));
  Sleep(50);
@@ -1464,6 +1465,7 @@ static int test_worker_wake_failure_transferred_quarantined(void) {
  CHECK(w.integrated.core.lifecycle==RAYA_REAPER_DEGRADED);
  CHECK(state.worker_wake_calls==1);
  CHECK((w.integrated.core.degradation_causes & RAYA_RECOVERY_CAUSE_WAKE_SIGNAL)!=0);
+ CHECK(((w.integrated.core.degradation_causes & RAYA_RECOVERY_CAUSE_OWNERSHIP_INVARIANT)!=0)==fail_publication);
  CHECK(WaitForSingleObject(w.thread,1000)==WAIT_OBJECT_0);
  CHECK(!raya_managed_worker_join(&w,5000));
  CHECK(w.joined==TRUE && w.thread==NULL && w.thread_exit_code==ERROR_INVALID_STATE);
@@ -1474,7 +1476,8 @@ static int test_worker_wake_failure_transferred_quarantined(void) {
 
 
  CHECK(a.retained_count==0 && a.retained_head==NULL);
-  CHECK(a.quarantine_count==1 && a.quarantine_head!=NULL);
+  CHECK(a.quarantine_count==(fail_publication?0u:1u));
+  CHECK((a.quarantine_head!=NULL)==(!fail_publication));
  CHECK(w.retained_count==0 && w.retained_head==NULL);
  CHECK(a.active_count==1 && callbacks==0);
  queued_op=(raya_managed_operation *)w.integrated.core.head;
@@ -1495,12 +1498,14 @@ static int test_worker_wake_failure_transferred_quarantined(void) {
         worker_items,1,&worker_count)==1);
   CHECK(adapter_count==0 && worker_count==0);
   CHECK(raya_adapter_test_quarantine_snapshot(&a,quarantine_items,1,&quarantine_count)==1);
-  CHECK(quarantine_count==1);
+  CHECK(quarantine_count==(fail_publication?0u:1u));
+  if (!fail_publication) {
   CHECK(quarantine_items[0].envelope_id==(uintptr_t)a.quarantine_head);
   CHECK(quarantine_items[0].operation_address==(uintptr_t)queued_op);
   CHECK(quarantine_items[0].adapter_instance_id==a.instance_id);
   CHECK(quarantine_items[0].adapter_operation_id==1);
   CHECK(quarantine_items[0].degradation_cause==RAYA_RECOVERY_CAUSE_WAKE_SIGNAL);
+  }
  CHECK(a.active_count==1);
  CHECK(w.integrated.core.queued==1 && w.integrated.core.outstanding==1);
  CHECK(w.integrated.reserved_slots==1 && w.integrated.registry.count==0);
@@ -1863,6 +1868,11 @@ int main(int argc,char **argv) {
   printf("Managed Worker WAIT_FAILED isolation: %ld assertions %s\n",checks,result?"FAIL":"PASS");
   return result;
  }
+ if (argc==2 && strcmp(argv[1],"--quarantine-publication-failed")==0) {
+  int result=test_worker_wake_failure_transferred_quarantined(TRUE);
+  printf("quarantine publication failure isolation: %ld assertions %s\n",checks,result?"FAIL":"PASS");
+  return result;
+ }
  if (argc==2 && strcmp(argv[1],"--strict-dual-ack")==0) {
   int result=test_shared_worker_strict_dual_ack_quarantine();
   printf("strict dual ACK isolation: %ld assertions %s\n",checks,result?"FAIL":"PASS");
@@ -1875,7 +1885,7 @@ int main(int argc,char **argv) {
  if (test_worker_retained_identity_publication_contract()) return 1;
 #ifdef RAYA_ADAPTER_TESTING
  if (test_retained_snapshot_validator()) return 1;
- if (test_worker_wake_failure_transferred_quarantined()) return 1;
+ if (test_worker_wake_failure_transferred_quarantined(FALSE)) return 1;
 #endif
 
  int i;
@@ -1902,5 +1912,3 @@ int main(int argc,char **argv) {
 #endif
  return 0;
 }
-
-

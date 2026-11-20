@@ -310,6 +310,11 @@ static int adapter_quarantine_transferred_degraded(
      op->integrated.collect_state!=RAYA_INTEGRATED_COLLECT_PENDING)
   return 0;
  EnterCriticalSection(&a->lock);
+ /* Test-only deterministic failure before any quarantine mutation. */
+ if (a->test_fail_quarantine_publication) {
+  LeaveCriticalSection(&a->lock);
+  return 0;
+ }
  for (item=a->quarantine_head;item;item=item->quarantine_next) {
   if (item==e) {
    LeaveCriticalSection(&a->lock);

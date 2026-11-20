@@ -701,3 +701,9 @@ The wake-failure process test now signals the Worker again only after publicatio
 Validation: test build 10/10 iterations, 12,630 assertions PASS (10,870 Adapter API; 1,200 strict dual-ACK; 250 NOT_ISSUED; 310 WAIT_FAILED). Non-test-macro compile PASS. Non-test-macro Adapter native suite 10/10 x 1,020 = 10,200 PASS. All 18 declared EXE/OBJ outputs absent after scripts.
 
 Gate 2 remains PARTIAL: no negative publication-failure injection test or full multi-operation contention matrix yet. Production registry, versioned diagnostics and bounded production wait remain absent. No Production ABI/behavior, v1 inventory semantics, retained-record release, replay or reconciliation changed.
+
+## 2026-11-20 — Stage 5.18 Gate 2 negative publication-failure test
+
+Added a test-only publication rejection switch under `RAYA_ADAPTER_TESTING`; the hook returns failure before mutating quarantine registry state. A separate process-isolated real named-pipe test proves fail-closed behavior: WAKE_SIGNAL plus secondary OWNERSHIP_INVARIANT causes, Worker DEGRADED exit, zero quarantine publication, no Adapter/Worker v1 retained record, preserved queued operation/reservation/owner/collection/live I/O resources, held Submitter issuer lease, and suppressed callback. No cleanup or recovery path is invoked.
+
+Validation: API build 10/10; negative case 10 x 43 = 430 PASS; positive API regression 10 x 1,089 = 10,890 PASS; strict dual-ACK 1,200 PASS; NOT_ISSUED 250 PASS; WAIT_FAILED 310 PASS; total 13,080 assertions PASS. Non-test-macro compile PASS; native Adapter suite 10/10 x 1,020 = 10,200 PASS. Build outputs cleaned. Gate 2 remains PARTIAL pending multi-operation/worker-contention coverage and queue membership validation beyond the single-head fixture; production registry, versioned diagnostics and bounded production wait are still outstanding. Production behavior/ABI and v1 inventory semantics unchanged.
