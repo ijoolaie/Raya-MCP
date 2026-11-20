@@ -87,21 +87,21 @@ A focused read-only trace of `reaper-managed-worker-v2.c`, `integrated-submit-ad
 For the narrow case where Worker terminal release has already succeeded and only Submitter ACK fails, investigate separating the failure domains:
 
 1. Preserve the Adapter envelope and publish its Worker retained-inventory record exactly once, with immutable first-cause/stage evidence.
-2. Preserve the exact Submitter failure state and do not retry ACK. When ACK commits to ACKED but its notification fails, the Submitter is DEGRADED; other false-return causes (for example, a closed API gate or ACK invariant rejection) must be classified separately rather than assumed to have the same lifecycle result.
-3. Close admission for the affected Adapter through a private, idempotent gate-close primitive shared with `raya_integrated_adapter_destroy_ex`; do not call Destroy from the Worker callback as a shortcut. The primitive sets the existing high bit and leaves Adapter storage/lock intact.
-4. Do not degrade the shared Worker solely because this already-terminal operation's Submitter ACK notification failed. The Worker may continue processing independent operations from other Adapters; the retained envelope remains owned/quarantined and Worker Destroy remains blocked by the retained list.
-5. Preserve Worker degradation for actual Worker/operation ownership, wait, finalizer, close, or accounting failures. The exception must be narrowly typed to the post-terminal Adapter ACK failure and must not generalize to pre-terminal or uncertain I/O.
+2. Preserve the exact Submitter failure state and do not retry ACK. Only the explicitly classified case where ACK committed to ACKED and its notification failed may use Adapter-scoped isolation; API-gate rejection, ACK state/lease invariant failure, or any unclassified false result keeps the existing Worker-degrading fail-closed behavior.
+3. Rely on the affected Submitter's DEGRADED lifecycle to reject further admissions after the committed-notification failure. The Adapter API gate remains open so read-only retained-count diagnostics remain available; new Adapter submissions may enter setup but must be rejected by Submitter admission before enqueue/OS issue and follow existing cleanup.
+4. Do not degrade the shared Worker solely for this classified ACK-committed/notification-failed case. The Worker may continue processing independent operations from other Adapters; the retained envelope remains owned/quarantined and Worker Destroy remains blocked by the retained list.
+5. Preserve Worker degradation for API-gate rejection, ACK state/lease invariant failure, any unclassified false ACK result, and actual Worker/operation ownership, wait, finalizer, close, or accounting failures. The exception must not generalize to pre-terminal or uncertain I/O.
 
 This candidate could let the same Worker terminally release a second independent operation after the first Adapter's Submitter has degraded, allowing the second independent Submitter to reach its own ACK failure. It does not release either retained envelope or make the failed ACK retryable.
 
 ### Candidate A unresolved proof obligations
 
 - Define whether a Worker with one or more post-terminal Adapter ACK-retained records may continue serving other Adapters, and specify the exact lifecycle state/acceptance contract.
-- Define a private gate-close primitive and its concurrent-entrant semantics, then reuse it from Destroy. Existing Destroy cannot be invoked as a proxy from the Worker callback because it combines admission closure with destruction preconditions and is caller-serialized.
-- Prove that a Submitter ACK failure cannot leave an already-admitted same-Adapter producer able to issue new work after the Adapter gate closes; queued/active work must remain quarantined under the Submitter's existing DEGRADED behavior.
+- Prove that Submitter DEGRADED prevents every not-yet-issued request from reaching Issue, including requests already admitted or queued when the ACK notification fails. Queued work must remain quarantined; any pre-issue cleanup failure still degrades the Worker.
+
 - Prove Worker inventory publication, Adapter inventory publication, and envelope lifetime remain consistent while the Worker continues processing other operations.
 - Specify Worker shutdown/join behavior with retained post-terminal records. Worker Destroy must continue to reject nonempty retained inventory.
-- Add distinct cause/stage semantics if `OWNERSHIP_INVARIANT` is too broad to distinguish an ACK notification failure from a Worker ownership invariant; do not silently relabel the existing first-cause evidence.
+- Add the distinct retained-record ACK-notification cause bit proposed below; do not reuse `OWNERSHIP_INVARIANT` or silently relabel existing first-cause evidence.
 - Prove that a failure to publish either retained record degrades the Worker and prevents continued processing; no partial publication may be treated as success.
 - Test both ACK failure modes separately: ACK state committed but notification failed, and ACK transition/invariant failed before commit. No second ACK call is permitted.
 
@@ -115,15 +115,15 @@ Candidate A is the next source/design feasibility target, not an approved archit
 
 ### Addendum - same-Adapter in-flight admission boundary review
 
-A further source trace checked whether closing the Adapter gate can prevent same-Adapter work from slipping past the ACK failure:
+A further source trace checked whether Submitter DEGRADED prevents same-Adapter work from slipping past the ACK failure:
 
 - `raya_integrated_adapter_submit` acquires an Adapter API entrant before entering `adapter_submit_impl`; the interlocked high bit prevents later entrants, while already-counted entrants may continue (`integrated-submit-adapter-v2.c:32-45, 551-560`).
 - The submit path orders Worker admission, Submitter admission, Worker reservation, then Submitter enqueue (`integrated-submit-adapter-v2.c:437-499`).
 - Submitter admission accepts only lifecycle RUNNING (`dedicated-io-submitter-v2.c:264-280`); enqueue accepts RUNNING or STOPPING but not DEGRADED (`:282-307`). Therefore an entrant that has not yet been admitted when ACK failure degrades the Submitter cannot gain a new Submitter admission. An entrant admitted earlier but not yet enqueued will have enqueue rejected; it then follows the existing abort/NOT_ISSUED cleanup path, whose failures must continue to quarantine/degrade the Worker.
-- Work already enqueued/issued before the ACK failure is different: it is already committed and cannot be withdrawn by closing the Adapter gate. It remains subject to its existing Worker completion and one ACK attempt; any failure must retain its own envelope. No cancellation, replay, or cleanup shortcut is implied.
-- `adapter_destroy_ex` closes the gate before checking entrants/active/retained state, but it combines closure with destruction and is explicitly caller-serialized. The internal gate-close primitive must preserve the pre-existing entrant count and leave Adapter storage/lock intact; it must not destroy, drain, or free anything. A read-only result may expose the entrant count to the test fixture, but no new public API is assumed.
+- Work already enqueued/issued before the ACK failure is different: it is already committed and cannot be withdrawn by Submitter DEGRADED. It remains subject to its existing Worker completion and one ACK attempt; any failure must retain its own envelope. No cancellation, replay, or cleanup shortcut is implied.
+- `adapter_destroy_ex` remains the existing caller-serialized way to close Adapter admission before post-join inventory capture; it is not called from the Worker callback. During live operation, the Adapter API gate stays open and Submitter DEGRADED is the barrier preventing new Issue.
 
-This narrows the race but does not close the proof obligation. The internal gate-close primitive must be linearized against `adapter_enter`; the test must hold an entrant at each meaningful boundary (before Submitter admission, after admission/before enqueue, and after enqueue/issue) and assert only the documented outcome. If an already-issued same-Adapter request remains, it must be allowed only through the existing terminal path and its exact ACK result; no new issue may occur after Submitter DEGRADED. Any cleanup failure in a pre-issue entrant remains a Worker-level failure and must stop the Worker.
+This narrows the race but does not close the proof obligation. The test must hold an Adapter entrant at each meaningful boundary (before Submitter admission, after Submitter admission/before enqueue, and after enqueue/issue) and assert only the documented outcome. If an already-issued same-Adapter request remains, it must be allowed only through the existing terminal path and its exact ACK result; no queued/not-yet-issued request may reach Issue after Submitter DEGRADED. Any cleanup failure in a pre-issue entrant remains a Worker-level failure and must stop the Worker.
 
 ### Candidate A proposed state contract and strict acceptance test
 
@@ -131,7 +131,7 @@ The following is a review proposal only; it is not an implementation contract ye
 
 | Plane | Normal state | On a post-terminal ACK failure for Adapter A | Required invariant |
 |---|---|---|---|
-| Adapter A | Admission open; active envelopes tracked | Admission closes; failed envelope moves to retained inventory | No new A API entrants; existing entrants drain only through already-defined outcomes; retained envelope is never freed |
+| Adapter A | Admission open; active envelopes tracked | Remains API-open; failed envelope moves to retained inventory | Submitter admission rejects new work before Issue; read-only retained-count remains observable; retained envelope is never freed |
 | Submitter A | RUNNING | Preserve its exact failure state (DEGRADED for notification failure) | No second ACK; no issue/replay of queued uncertain work |
 | Worker shared by A and B | ACCEPTING | Remains ACCEPTING only if terminal release and retained-record publication both succeeded | Worker continues only for independent operations; any Worker-level failure or failed retention publication still degrades it |
 | Adapter A envelope | Active, Worker-terminal-released | Retained at SUBMITTER_ACK / POST_TERMINAL with immutable identity/cause | Callback suppressed; no release/free/retry/replay |
@@ -144,8 +144,8 @@ The same transition must occur independently for Adapter B. The exception is lim
 1. Start one shared Worker and two independent Adapter/Submitter pairs.
 2. Submit two real named-pipe operations, one through each Adapter. Prove both have been accepted by the OS and handed to the same Worker before either ACK failure is induced.
 3. Arm one exact ACK-notification failure for each Submitter using the existing per-Submitter event-handle dispatcher; do not use a timing race or a shared global selector.
-4. Allow operation A to reach real terminal completion. Verify its ACK fails once, A's envelope is retained in Adapter A and Worker inventory, Adapter A admission closes, Submitter A is DEGRADED for the injected notification failure, and the shared Worker has not become DEGRADED.
-5. Allow operation B to reach real terminal completion on that same Worker. Verify its independent ACK fails once and B is retained with its own identity pair; Submitter B degrades independently.
+4. Allow operation A to reach real terminal completion. Verify its ACK fails once, A's envelope is retained in Adapter A and Worker inventory, Submitter A is DEGRADED with request state ACKED and issuer lease released, and the shared Worker has not become DEGRADED. A subsequent A submit is rejected before Issue.
+5. Allow operation B to reach real terminal completion on that same Worker. Verify its independent ACK fails once and B is retained with its own identity pair; Submitter B is DEGRADED with its own request state ACKED and issuer lease released.
 6. Verify exactly two distinct OS-issued operations, two terminal completions, two distinct Adapter identity pairs, two POST_TERMINAL Worker records, one retained record per Adapter, no callback delivery, no ACK retry, no close retry, no free, no I/O replay, and no mutation of retained evidence.
 7. Negative controls: a Worker finalizer/close failure, uncertain completion, failed Worker retained publication, or Worker accounting invariant must still degrade the Worker and stop further completion dispatch.
 
@@ -169,6 +169,20 @@ Therefore the current data model already separates the retained inventory from a
 
 The Adapter release callback currently receives only the Boolean result of `raya_submitter_acknowledge`. A false result can represent different Submitter-side outcomes: API-gate rejection before entering the Submitter, an ACK state/lease invariant failure before commit, or a committed ACK followed by changed/wake notification failure (which leaves the request ACKED and Submitter DEGRADED). These must not be collapsed into a claim that every failed call degraded the Submitter.
 
-For Candidate A, the scope discriminator is the fact that the Worker has already completed terminal hold, finalizer close/commit, owner release, and Integrated release before invoking `adapter_worker_release`. Any false ACK result at this exact callback boundary is therefore a post-terminal Submitter/Adapter failure: retain the envelope, close only that Adapter's admission, preserve the Submitter's exact state, and do not retry ACK. Worker degradation is reserved for failure to publish the retained record or any actual Worker/operation lifecycle invariant. The retained cause should identify the ACK boundary without falsely asserting that every variant was a Worker ownership failure; whether to add a distinct additive cause enum or rely on the existing `SUBMITTER_ACK` stage plus a documented cause remains an explicit design choice.
+For Candidate A, the scope discriminator is the classified result from the ACK call after the Worker has completed terminal hold, finalizer close/commit, owner release, and Integrated release. Only ACK_COMMITTED_NOTIFICATION_FAILED is eligible for Adapter-scoped quarantine without Worker degradation. API-gate rejection, ACK state/lease invariant failure, and any unclassified false result retain the envelope and keep the existing Worker-degrading behavior. The retained cause should identify the ACK boundary without falsely asserting a Worker ownership failure; whether to add a distinct additive cause enum or rely on the existing `SUBMITTER_ACK` stage plus a documented cause remains an explicit design choice.
 
 This boundary must be revalidated against all public Submitter API-gate and shutdown races before implementation. It does not authorize a second ACK attempt or a Submitter state mutation from the Adapter.
+
+### Addendum - typed ACK result and retained-cause contract proposal
+
+Candidate A must not infer the ACK result by reading Submitter internals from the Adapter or by treating every Boolean false as equivalent. The Submitter owns its request state and must report the outcome it committed.
+
+Proposed additive contract:
+
+- Add `raya_submitter_acknowledge_ex` with a typed result that distinguishes at least SUCCESS, COMMITTED_NOTIFICATION_FAILED (request is ACKED and issuer lease has been released, but changed/wake notification failed), NOT_COMMITTED_FAILURE (wait/state/lease/invariant failure), and API_GATE_CLOSED.
+- Keep the existing Boolean `raya_submitter_acknowledge` as a compatibility wrapper returning true only for SUCCESS.
+- The Adapter may use the no-Worker-degrade path only for COMMITTED_NOTIFICATION_FAILED. Every other non-success result follows the existing retain + Worker DEGRADED path.
+- Do not let the Adapter mutate Submitter lifecycle or request state. Do not issue a second ACK.
+- Add a distinct retained-record cause bit for post-terminal Submitter ACK notification failure (proposed `RAYA_RECOVERY_CAUSE_SUBMITTER_ACK_NOTIFICATION`, next unused bit). Store it only in the retained record; do not add it to Worker degradation causes. The recovery-policy evaluator's unknown-cause behavior is already fail-closed (`reaper-recovery-policy-v2.c` rejects any bit outside `ALL_CAUSES`), so accidental use as a Worker degradation cause remains blocked. Existing v1 inventory layouts need not change because the cause field is already a `uint32_t`; documentation must define the additive value.
+
+The exact result must be captured under the Submitter lock at the point the transition/failure is known, including whether ACK committed and whether the issuer lease was released. This avoids unsynchronized cross-component reads and prevents the Adapter from misclassifying a duplicate ACK, API-gate rejection, or pre-commit wait failure as the narrow notification-only case.
