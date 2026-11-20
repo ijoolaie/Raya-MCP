@@ -440,3 +440,7 @@ The Submitter's source loop issues/publishes one request at a time while later r
 ## Stage 5.18 Gate 2 update — 2026-11-20
 
 Completed deterministic multi-operation negative evidence: two real Adapter API READs are committed before the second wake failure; the current single-operation quarantine callback rejects the second publication fail-closed. Process-isolated test passed 10/10; aggregate API build 13,300 assertions PASS; outputs cleaned. Gate 2 remains PARTIAL because successful multi-operation publication is not implemented/proven. Next gates remain bounded production wait (Gate 3), versioned diagnostics (Gate 4), then strict regression/owner acceptance (Gate 5/F). No Production/ABI/recovery or v1 inventory semantics changed.
+
+## Stage 5.18 Gate 3 source audit — 2026-11-20
+
+Confirmed source ordering for bounded-wait timeout: DEGRADED check before queue promotion/claim; WAIT_TIMEOUT returns through a lock-protected DEGRADED check without queue or ownership mutation; timeout/handoff race is serialized by Worker lock. Existing 100 ms finite wait is RAYA_ADAPTER_TESTING-only; Production still uses INFINITE. Gate 3 remains PARTIAL pending process-isolated timeout-exit evidence, race coverage, idle/completion regression and interval measurement. Production finite-wait implementation awaits separate explicit authorization.
