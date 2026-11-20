@@ -421,3 +421,7 @@ The source-backed proposal is `broker-prototype-v2-20261106/validation/STAGE-5-1
 ## 2026-11-20 — Stage 5.18 Gate 1 audit outcome
 
 Gate 1 source/lock audit is PARTIAL. Lock-order prerequisite passed for audited modules (no nested Adapter -> Worker lock; Submitter and Worker callback boundaries verified), but the test-only degraded-handoff callback does not distinguish WAKE_SIGNAL from OWNERSHIP_INVARIANT and is not yet a valid WAKE_SIGNAL-only publication gate. Production atomic quarantine registry and bounded Worker wait remain unimplemented. Next: cause-specific test hook + negative owner-handoff-failure assertion, then Gate 2 deterministic publication. Preserve Stage 5.16 strict dual-ACK criterion and all v1 inventory semantics; no recovery/replay/cleanup authorization.
+
+## 2026-11-20 — Stage 5.18 Gate 1 closed
+
+Gate 1 PASS: audited Worker/Adapter/Submitter lock ordering and callback boundaries; narrowed the test-only handoff callback to committed handoff + WAKE_SIGNAL failure only. Integrated Adapter API regression passed 10/10 iterations (12,570 assertions) and declared build outputs were cleaned. No Production ABI/behavior or v1 inventory semantics changed. Next: Gate 2 deterministic atomic publication, but do not treat the current test-only retained-list hook as the production in-flight registry. Stage 5.18 remains PARTIAL; Stage 5.16 strict dual-ACK criterion remains preserved.

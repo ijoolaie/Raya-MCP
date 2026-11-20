@@ -487,6 +487,9 @@ static raya_managed_handoff_result managed_worker_handoff_internal(
 #endif
     ) {
     raya_managed_handoff_result result = RAYA_MANAGED_HANDOFF_NOT_TRANSFERRED;
+#ifdef RAYA_ADAPTER_TESTING
+    BOOL wake_signal_failed = FALSE;
+#endif
     if (w == NULL || op == NULL || !w->initialized) return result;
     EnterCriticalSection(&w->lock);
     if (raya_reaper_integrated_handoff(&w->integrated, &op->integrated)) {
@@ -496,14 +499,17 @@ static raya_managed_handoff_result managed_worker_handoff_internal(
         } else if (!signal_wake_locked(w)) {
             mark_cause_locked(w, RAYA_RECOVERY_CAUSE_WAKE_SIGNAL);
             result = RAYA_MANAGED_HANDOFF_TRANSFERRED_DEGRADED;
+#ifdef RAYA_ADAPTER_TESTING
+            wake_signal_failed = TRUE;
+#endif
         } else {
             result = RAYA_MANAGED_HANDOFF_TRANSFERRED;
         }
 #ifdef RAYA_ADAPTER_TESTING
-        /* Publish before unlocking: the Worker thread cannot pass its next
-           Worker-lock boundary before the Adapter quarantine is visible. */
-        if (result == RAYA_MANAGED_HANDOFF_TRANSFERRED_DEGRADED &&
-            on_degraded != NULL && !on_degraded(op, context))
+        /* Publish before unlocking, and only for committed WAKE_SIGNAL failure.
+           Owner-handoff invariant failures must not enter this quarantine path. */
+        if (wake_signal_failed && on_degraded != NULL &&
+            !on_degraded(op, context))
             mark_cause_locked(w, RAYA_RECOVERY_CAUSE_OWNERSHIP_INVARIANT);
 #endif
     }

@@ -75,3 +75,17 @@ Similarly, the finite 100 ms Worker wait is test-only. The non-test-macro produc
 Implement and test the cause-specific distinction in the broker prototype only, preserving production semantics and v1 inventory. The test callback must be invoked only for a committed handoff whose wake signal failed. Add a negative owner-handoff-failure case proving the callback is not invoked. Do not yet reuse Worker v1 retained records, add recovery/reconciliation, or release any uncertain record.
 
 No tests or builds were run for this read-only audit. No temporary files or test artifacts were created.
+## 2026-11-20 cause-specific callback follow-up
+
+The test-only handoff path was narrowed in `reaper-managed-worker-v2.c`: a local `wake_signal_failed` flag is set only after integrated handoff and pipe-owner handoff have succeeded and the Worker wake signal itself fails. The `RAYA_ADAPTER_TESTING` callback is now invoked only when that flag is true. The pipe-owner handoff failure branch still marks OWNERSHIP_INVARIANT and returns TRANSFERRED_DEGRADED, but cannot invoke the quarantine callback. This is test-only; the non-test-macro Production path and its ABI are unchanged.
+
+Validation: `build-integrated-submit-adapter-v2-api-test.cmd` compiled with Visual Studio 2026 Build Tools 18.7.3 x64 and `/W4 /WX`, then completed 10/10 iterations with exit code 0:
+- Full Adapter API regression: 10 x 1,081 assertions across 68 cases = 10,810 PASS.
+- Strict dual-ACK isolation: 10 x 120 = 1,200 PASS.
+- NOT_ISSUED notification isolation: 10 x 25 = 250 PASS.
+- Managed Worker WAIT_FAILED isolation: 10 x 31 = 310 PASS.
+- Total: 12,570 assertions PASS.
+
+The existing wake-failure path is exercised by the full Adapter API suite. The callback gating itself is source-verified; no dedicated runtime injection test for the pipe-owner handoff-failure branch was added because that would require manufacturing an invalid ownership state. The build script cleanup was independently checked: all 16 declared EXE/OBJ outputs are absent.
+
+Gate 1 is now **PASS for the audited source/lock contract and test-only callback gate**. This does not implement the production callback, distinct in-flight quarantine registry, versioned diagnostic inventory, or bounded production wait. Stage 5.18 remains PARTIAL. No retained record was released/unlinked/replayed/reconciled; no Production behavior or v1 inventory semantics changed.

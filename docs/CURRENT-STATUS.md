@@ -648,3 +648,7 @@ See `broker-prototype-v2-20261106/validation/STAGE-5-18-TRANSFERRED-WAKE-FAILURE
 ## 2026-11-20 — Stage 5.18 Gate 1 source/lock audit
 
 Read-only source audit: `broker-prototype-v2-20261106/validation/STAGE-5-18-GATE-1-SOURCE-LOCK-AUDIT-20261120.md`. No Adapter -> Worker nested lock acquisition was found in the audited Worker/Adapter/Submitter modules; Submitter callbacks run outside Submitter lock and Worker release callback outside Worker lock. Gate 1 remains PARTIAL: the existing test-only handoff callback fires for both WAKE_SIGNAL and OWNERSHIP_INVARIANT degraded handoffs, so cause-specific gating is not yet proven. The hook uses the existing Adapter retained list, not a distinct production in-flight registry. Production wait remains INFINITE; bounded wait is test-only. No code or runtime behavior changed and no tests/builds were run. Stage 5.18 PARTIAL; Phase 1 NOT ACCEPTED; Production NO-GO.
+
+## 2026-11-20 — Stage 5.18 Gate 1 closure
+
+Gate 1 is PASS for the audited lock-order contract and the test-only WAKE_SIGNAL-only callback gate. The test-only handoff callback is now invoked only after committed integrated/pipe-owner handoff and wake-signal failure; owner-handoff invariant failure cannot invoke it. The integrated Adapter API suite passed 10/10 iterations (12,570 assertions); all declared EXE/OBJ outputs were verified absent. No Production ABI/behavior changed. Stage 5.18 remains PARTIAL: distinct production in-flight quarantine, versioned diagnostics and bounded production wait remain outstanding.
