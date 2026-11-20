@@ -15,7 +15,7 @@ Stage 5.19 remains dependent on this exact Stage 5.16 proof.
 
 ## What this decision authorizes
 
-It authorizes a separately reviewed architecture-design work item to find a way to satisfy the unchanged criterion while preserving fail-closed isolation. It does not select an architecture, authorize Production changes, authorize a test hook, or permit weakening any lifecycle/recovery contract. Implementation remains gated on a concrete design review and bounded test strategy.
+It authorizes a separately reviewed architecture change to satisfy the unchanged criterion while preserving fail-closed isolation. Candidate A is selected by the later architecture review decision in this document for implementation in the broker-prototype branch. It does not authorize Production changes or weakening any lifecycle/recovery contract.
 
 ## Source-backed constraint
 
@@ -23,7 +23,7 @@ The current Worker performs its release callback synchronously on its single com
 
 A timing barrier inside the first ACK callback is not a valid solution: it blocks the only Worker thread that must process the second completion. The existing mixed-stage test remains useful evidence for two Adapter-associated retained records, but its second operation is rejected before OS issue and does not satisfy this criterion.
 
-## Design questions that must be answered before implementation
+## Initial design questions (disposition recorded in later review sections)
 
 1. Can terminal completion notification/ACK delivery be separated from the Worker completion loop without transferring or duplicating ownership of the operation envelope?
 2. If ACK delivery is dispatched asynchronously, which component owns the queued notification, its lifetime, its failure evidence, and its shutdown/join contract?
@@ -33,7 +33,7 @@ A timing barrier inside the first ACK callback is not a valid solution: it block
 6. What externally observable snapshots prove two OS-issued operations, two terminal completions, two independent ACK failures, two retained records, and exact identity/cause correspondence?
 7. Does the proposal preserve the current single-Worker topology and resource ownership, or does it introduce a new shared coordination object whose lifecycle must be specified?
 
-## Candidate to investigate - not selected
+## Initial candidate considered - dispatcher later deferred
 
 A bounded terminal-notification dispatcher outside the Worker completion thread is one candidate for source-level feasibility review. The Worker would publish a terminal notification only after its own terminal/finalizer ownership transition is valid; a separately owned dispatcher would perform each Submitter ACK. This could allow the Worker to finish a second already-issued operation before the first ACK failure is delivered.
 
@@ -48,19 +48,19 @@ This candidate is **not yet shown safe**. In particular, the current `retain_env
 - Do not retry ACK, release, close, callback, or I/O; do not replay uncertain writes.
 - Do not alter Stage 5.16 or 5.19 acceptance wording to fit available evidence.
 
-## Required next work
+## Initial work plan (updated by the architecture review decision below)
 
 1. Read-only source trace of Worker release callback, Adapter retained publication, Submitter ACK transition, and all relevant shutdown/destroy paths.
 2. Produce at most two concrete architecture candidates with explicit ownership/state diagrams and failure matrices; reject candidates that require an unsafe post-DEGRADED Worker continuation.
-3. Select no candidate until its lock ordering, object lifetimes, callback cardinality, failure isolation, and teardown are proven against the public lifecycle contracts.
+3. Candidate A was selected only after tracing lock ordering, object lifetimes, callback cardinality, failure isolation, and teardown against the public lifecycle contracts.
 4. Define a deterministic test fixture using existing supported seams where possible; any new test-only seam requires a separate narrow review and must expose only a real synchronization boundary.
 5. Only after design review, implement in an isolated branch and prove the strict dual-ACK scenario with actual OS-issued operations.
 
 ## Current status
 
 - Owner decision to preserve strict 5.16 criterion: RECORDED.
-- Architecture candidate: NOT SELECTED.
-- Architecture implementation: NOT AUTHORIZED by this document.
+- Architecture candidate: Candidate A SELECTED; Candidate B deferred.
+- Architecture implementation: AUTHORIZED in the broker-prototype branch only; Production wiring remains NOT AUTHORIZED.
 - Stage 5.16: PARTIAL / NOT ACCEPTED.
 - Stage 5.19: PARTIAL / DEPENDENCY BLOCKED.
 - Stage 5.18: PARTIAL.
@@ -82,7 +82,7 @@ A focused read-only trace of `reaper-managed-worker-v2.c`, `integrated-submit-ad
 - `raya_submitter_acknowledge` can fail after the request has already transitioned to ACKED and `issuer_leases` has been decremented: failure to signal `changed_event` or `wake_event` degrades that Submitter and returns failure (`dedicated-io-submitter-v2.c:326-347`). The ACK is not safe to repeat.
 - Adapter already has an interlocked admission gate (`lifecycle_state`, `adapter_enter`); the high bit closes admission (`integrated-submit-adapter-v2.c:32-45`, header `:76`). The only current public operation that sets that bit is `raya_integrated_adapter_destroy_ex`, which then checks entrants/active/retained counts and may return BUSY (`:580-631`). There is no close-admission-only API.
 
-### Candidate A - Adapter-scoped post-terminal quarantine (preferred for feasibility review; not selected)
+### Candidate A - Adapter-scoped post-terminal quarantine (selected by later architecture review)
 
 For the narrow case where Worker terminal release has already succeeded and only Submitter ACK fails, investigate separating the failure domains:
 
@@ -94,9 +94,9 @@ For the narrow case where Worker terminal release has already succeeded and only
 
 This candidate could let the same Worker terminally release a second independent operation after the first Adapter's Submitter has degraded, allowing the second independent Submitter to reach its own ACK failure. It does not release either retained envelope or make the failed ACK retryable.
 
-### Candidate A unresolved proof obligations
+### Candidate A implementation proof obligations
 
-- Define whether a Worker with one or more post-terminal Adapter ACK-retained records may continue serving other Adapters, and specify the exact lifecycle state/acceptance contract.
+- Implement and test the defined lifecycle contract: Worker remains ACCEPTING after a successfully published ACK-notification-retained record, while Worker Destroy remains blocked by nonempty retained inventory.
 - Prove that Submitter DEGRADED prevents every not-yet-issued request from reaching Issue, including requests already admitted or queued when the ACK notification fails. Queued work must remain quarantined; any pre-issue cleanup failure still degrades the Worker.
 
 - Prove Worker inventory publication, Adapter inventory publication, and envelope lifetime remain consistent while the Worker continues processing other operations.
@@ -111,7 +111,7 @@ A separate dispatcher could move ACK calls out of the Worker callback, but it ad
 
 ### Current disposition
 
-Candidate A is the next source/design feasibility target, not an approved architecture. No code, header, ABI, test hook, lifecycle, ownership, recovery, or Production behavior changed in this review. No tests/builds were run. The strict dual-ACK criterion remains unchanged; Stage 5.16/5.19 remain PARTIAL and Production remains NO-GO.
+At this point in the document Candidate A was under feasibility review; the later Architecture review decision below supersedes this interim disposition and selects Candidate A for prototype implementation. No code/tests/builds were changed or run by this source-level review. The strict dual-ACK criterion remains unchanged; Stage 5.16/5.19 remain PARTIAL and Production remains NO-GO.
 
 ### Addendum - same-Adapter in-flight admission boundary review
 
@@ -186,3 +186,35 @@ Proposed additive contract:
 - Add a distinct retained-record cause bit for post-terminal Submitter ACK notification failure (proposed `RAYA_RECOVERY_CAUSE_SUBMITTER_ACK_NOTIFICATION`, next unused bit). Store it only in the retained record; do not add it to Worker degradation causes. The recovery-policy evaluator's unknown-cause behavior is already fail-closed (`reaper-recovery-policy-v2.c` rejects any bit outside `ALL_CAUSES`), so accidental use as a Worker degradation cause remains blocked. Existing v1 inventory layouts need not change because the cause field is already a `uint32_t`; documentation must define the additive value.
 
 The exact result must be captured under the Submitter lock at the point the transition/failure is known, including whether ACK committed and whether the issuer lease was released. This avoids unsynchronized cross-component reads and prevents the Adapter from misclassifying a duplicate ACK, API-gate rejection, or pre-commit wait failure as the narrow notification-only case.
+
+## Architecture review decision - Candidate A selected for implementation
+
+Based on the source trace and the Stage 5.20 single-owner policy, select Candidate A as the narrowest architecture change for Stage 5.16. Do not add a separate ACK dispatcher.
+
+Rationale:
+
+- At `adapter_worker_release`, Worker terminal hold, finalizer close/commit, owner release, and Integrated release have already succeeded. The Worker no longer owns an active I/O completion or open operation handle for this envelope; the remaining failure belongs to the Submitter ACK boundary.
+- The Submitter owns ACK state and notification. A committed ACK whose notification fails is a Submitter-local degraded condition; it must not be reinterpreted as a Worker completion/finalizer failure.
+- The existing Worker retained list is independent of Worker admission, reservation, and drain predicates, while Worker Destroy remains blocked by nonempty retained inventory. This supports continued service for other Adapters without releasing or forgetting the retained envelope.
+- The exact typed ACK result prevents the exception from swallowing API-gate, pre-commit wait, state/lease invariant, or other unclassified failures. Those remain Worker-degrading as today.
+- The change adds no thread, queue, event, or second Worker and preserves one explicit owner per lifecycle plane.
+
+Implementation contract:
+
+1. Add the typed Submitter ACK result API and preserve the existing Boolean API as a wrapper.
+2. Add a distinct retained-record cause value for committed ACK notification failure; it is diagnostic only and is not a Worker degradation cause.
+3. Add an Adapter-local post-terminal retention path that publishes both Adapter and Worker records exactly once. On success it suppresses callback/free, does not retry ACK, does not mark the shared Worker DEGRADED, and does not signal the Worker's wake event (the callback is executing on the Worker thread, which returns directly to its loop).
+4. If Adapter or Worker retained publication fails, mark the Worker DEGRADED and exit through the existing fail-closed path. Every other non-success ACK result continues through the current Worker-degrading retention path.
+5. Do not close the Adapter API gate. The Submitter's DEGRADED lifecycle rejects new Submitter admission; any already-admitted but not-enqueued request is rejected by Submitter enqueue and follows existing NOT_ISSUED cleanup. A cleanup failure remains Worker-degrading. The Adapter retained-count diagnostic remains observable while the Worker continues.
+6. Keep Worker Destroy blocked by retained inventory. Shutdown/Join may complete after active Worker work drains; no retained record is removed or freed.
+7. Add the strict two-Adapter/two-Submitter/one-Worker runtime test using two real OS-issued named-pipe operations and exact per-Submitter notification-failure injection. Use the existing API-test executable as the process boundary: retained fixtures are intentionally not destroyed/freed, and the test process reclaims them on exit. No manual handle close, structure zeroing, retained-list mutation, or fake cleanup is allowed.
+8. Preserve negative behavior: pre-commit ACK failures, API-gate rejection, Worker close/finalizer failures, uncertain completion, ownership/accounting failures, and retained-publication failures still degrade the shared Worker.
+
+This is an experimental broker-prototype architecture change only. It does not authorize Production integration, positive recovery, reconciliation, retry, replay, or Phase 1 acceptance. The strict 5.16 criterion and 5.19 dependency are unchanged.
+
+### Design gate disposition
+
+- Candidate A: SELECTED for implementation under the owner's strict-criterion decision.
+- Candidate B dispatcher: NOT SELECTED.
+- Production wiring: NOT AUTHORIZED.
+- Strict 5.16 runtime proof: NOT YET RUN / NOT COMPLETE.
