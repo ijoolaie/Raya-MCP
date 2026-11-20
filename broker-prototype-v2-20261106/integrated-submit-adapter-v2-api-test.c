@@ -1429,7 +1429,7 @@ static int test_managed_worker_wait_failed_retains_live_operation(void) {
  (void)client; (void)server;
  return 0;
 }
-static int test_worker_wake_failure_transferred_untracked(void) {
+static int test_worker_wake_failure_transferred_quarantined(void) {
  raya_integrated_submit_adapter a; raya_dedicated_submitter s; raya_managed_worker w;
  api_state state; volatile LONG callbacks=0;
  HANDLE server=INVALID_HANDLE_VALUE,client=INVALID_HANDLE_VALUE;
@@ -1439,6 +1439,8 @@ static int test_worker_wake_failure_transferred_untracked(void) {
  raya_adapter_test_retained_item adapter_items[1];
  raya_worker_test_retained_item worker_items[1];
  size_t adapter_count=0,worker_count=0;
+  raya_adapter_test_quarantine_item quarantine_items[1];
+  size_t quarantine_count=0;
  DWORD deadline;
  ZeroMemory(&state,sizeof(state)); state.fail_worker_wake=TRUE;
  server=CreateNamedPipeW(L"\\\\.\\pipe\\raya-adapter-worker-wake-fail",
@@ -1449,7 +1451,7 @@ static int test_worker_wake_failure_transferred_untracked(void) {
      GENERIC_READ|GENERIC_WRITE,0,NULL,OPEN_EXISTING,0,NULL);
  CHECK(client!=INVALID_HANDLE_VALUE);
  CHECK(setup(&a,&s,&w,&state));
- a.test_signal_worker_wake_on_quarantine=FALSE;
+ a.test_signal_worker_wake_on_quarantine=TRUE;
  state.worker_wake_event=w.wake_event;
  CHECK(raya_managed_worker_set_wake_callback(&w,test_worker_set_event,&state));
  Sleep(50);
@@ -1471,7 +1473,8 @@ static int test_worker_wake_failure_transferred_untracked(void) {
  CHECK(w.integrated.registry.count==0);
 
 
- CHECK(a.retained_count==1 && a.retained_head!=NULL);
+ CHECK(a.retained_count==0 && a.retained_head==NULL);
+  CHECK(a.quarantine_count==1 && a.quarantine_head!=NULL);
  CHECK(w.retained_count==0 && w.retained_head==NULL);
  CHECK(a.active_count==1 && callbacks==0);
  queued_op=(raya_managed_operation *)w.integrated.core.head;
@@ -1489,12 +1492,15 @@ static int test_worker_wake_failure_transferred_untracked(void) {
  CHECK(!raya_integrated_adapter_destroy(&a));
  CHECK((InterlockedCompareExchange(&a.lifecycle_state,0,0)&0x40000000)!=0);
  CHECK(raya_adapter_test_retained_snapshot(&a,adapter_items,1,&adapter_count,
-       worker_items,1,&worker_count)==1);
- CHECK(adapter_count==1 && worker_count==0);
-CHECK(adapter_items[0].operation_id==(uintptr_t)queued_op);
-CHECK((adapter_items[0].flags&1u)!=0 && (adapter_items[0].flags&2u)!=0);
-CHECK((adapter_items[0].flags&4u)==0 && (adapter_items[0].flags&32u)!=0);
-CHECK(adapter_items[0].registry_matches==0);
+        worker_items,1,&worker_count)==1);
+  CHECK(adapter_count==0 && worker_count==0);
+  CHECK(raya_adapter_test_quarantine_snapshot(&a,quarantine_items,1,&quarantine_count)==1);
+  CHECK(quarantine_count==1);
+  CHECK(quarantine_items[0].envelope_id==(uintptr_t)a.quarantine_head);
+  CHECK(quarantine_items[0].operation_address==(uintptr_t)queued_op);
+  CHECK(quarantine_items[0].adapter_instance_id==a.instance_id);
+  CHECK(quarantine_items[0].adapter_operation_id==1);
+  CHECK(quarantine_items[0].degradation_cause==RAYA_RECOVERY_CAUSE_WAKE_SIGNAL);
  CHECK(a.active_count==1);
  CHECK(w.integrated.core.queued==1 && w.integrated.core.outstanding==1);
  CHECK(w.integrated.reserved_slots==1 && w.integrated.registry.count==0);
@@ -1525,8 +1531,16 @@ static int test_destroy_ex_reports_effect_and_reconciliation(void) {
  CHECK(result.retry==RAYA_ADAPTER_DESTROY_RETRY_RECONCILE);
  CHECK(result.step==2 && result.retained==1 && result.active==0);
  a.retained_count=0;
- a.retained_head=NULL;
- CHECK(raya_integrated_adapter_destroy_ex(&a,&result)==RAYA_ADAPTER_DESTROY_SUCCESS);
+  a.retained_head=NULL;
+#ifdef RAYA_ADAPTER_TESTING
+  a.quarantine_count=1;
+  a.quarantine_head=(raya_adapter_envelope *)(uintptr_t)1;
+  CHECK(raya_integrated_adapter_destroy_ex(&a,&result)==RAYA_ADAPTER_DESTROY_BUSY);
+  CHECK(result.step==2 && result.active==0 && result.retained==0);
+  a.quarantine_count=0;
+  a.quarantine_head=NULL;
+#endif
+  CHECK(raya_integrated_adapter_destroy_ex(&a,&result)==RAYA_ADAPTER_DESTROY_SUCCESS);
  CHECK(result.effect==RAYA_ADAPTER_DESTROY_EFFECT_DESTROYED);
  CHECK(result.status==RAYA_ADAPTER_DESTROY_SUCCESS && result.step==3);
  CHECK(result.admission_closed==TRUE && result.lock_present==FALSE);
@@ -1861,7 +1875,7 @@ int main(int argc,char **argv) {
  if (test_worker_retained_identity_publication_contract()) return 1;
 #ifdef RAYA_ADAPTER_TESTING
  if (test_retained_snapshot_validator()) return 1;
- if (test_worker_wake_failure_transferred_untracked()) return 1;
+ if (test_worker_wake_failure_transferred_quarantined()) return 1;
 #endif
 
  int i;

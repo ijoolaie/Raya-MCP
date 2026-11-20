@@ -101,6 +101,9 @@ struct raya_adapter_envelope {
  DWORD immediate_error;
  BOOL read_operation;
  BOOL retained;
+#ifdef RAYA_ADAPTER_TESTING
+  BOOL quarantined;
+#endif
  BOOL worker_admitted;
  BOOL worker_finished;
  BOOL worker_owns_operation;
@@ -110,6 +113,9 @@ struct raya_adapter_envelope {
 #endif
  BOOL tracked;
  struct raya_adapter_envelope *retained_next;
+#ifdef RAYA_ADAPTER_TESTING
+  struct raya_adapter_envelope *quarantine_next;
+#endif
 };
 
 static int worker_finish_once(raya_adapter_envelope *e) {
@@ -278,23 +284,51 @@ static int adapter_quarantine_transferred_degraded(
  raya_managed_operation *op, void *context) {
  raya_adapter_envelope *e=(raya_adapter_envelope *)context;
  raya_integrated_submit_adapter *a;
- if (!e || op!=&e->operation || !e->adapter) return 0;
+ raya_managed_worker *w;
+ raya_adapter_envelope *item;
+ if (!e || !op || op!=&e->operation || !e->adapter) return 0;
  a=e->adapter;
- /* Called under Worker lock; sole nested lock order is Worker -> Adapter. */
+ w=a->worker;
+ /* Worker lock is already held. Validate the exact committed queue-owned operation
+    before publishing it into the independent test quarantine registry. */
+ if (!w || !w->initialized || !op->identity_valid ||
+     op->worker_epoch==0 || op->worker_epoch!=w->worker_epoch ||
+     op->worker_operation_id==0 ||
+     op->inventory_kind!=RAYA_WORKER_INVENTORY_ADAPTER_ASSOCIATED ||
+     !op->adapter_identity_valid ||
+     op->adapter_instance_id!=a->instance_id ||
+     op->adapter_operation_id!=e->operation_id ||
+     !e->worker_admitted || e->retained || e->quarantined ||
+     op->integrated.base.state!=RAYA_REAPER_OP_QUEUED ||
+     w->integrated.core.head!=&op->integrated.base ||
+     w->integrated.core.queued!=1 ||
+     w->integrated.core.outstanding!=1 ||
+     w->integrated.core.caller_active!=0 ||
+     w->integrated.reserved_slots!=1 ||
+     w->integrated.registry.count!=0 ||
+     op->owner.state!=RAYA_PIPE_OWNER_REAPER_QUEUED ||
+     op->integrated.collect_state!=RAYA_INTEGRATED_COLLECT_PENDING)
+  return 0;
  EnterCriticalSection(&a->lock);
- if (e->retained || e->transferred_degraded_quarantined) {
+ for (item=a->quarantine_head;item;item=item->quarantine_next) {
+  if (item==e) {
+   LeaveCriticalSection(&a->lock);
+   return 0;
+  }
+ }
+ if (e->retained || e->quarantined) {
   LeaveCriticalSection(&a->lock);
   return 0;
  }
- e->retained=TRUE;
+ e->quarantined=TRUE;
  e->transferred_degraded_quarantined=TRUE;
- e->retained_next=a->retained_head;
- a->retained_head=e;
- ++a->retained_count;
+ e->quarantine_next=a->quarantine_head;
+ a->quarantine_head=e;
+ ++a->quarantine_count;
  LeaveCriticalSection(&a->lock);
- /* Test-only race: Worker thread is awakened but blocks on Worker lock until publication ends. */
+ /* Optional test-only second signal exercises the publication/Worker-lock race. */
  if (a->test_signal_worker_wake_on_quarantine &&
-     !SetEvent(a->worker->wake_event)) return 0;
+     !SetEvent(w->wake_event)) return 0;
  return 1;
 }
 #endif
@@ -626,6 +660,9 @@ raya_adapter_destroy_status raya_integrated_adapter_destroy_ex(
  raya_integrated_submit_adapter *a,raya_adapter_destroy_result *r) {
  LONG state,desired;
  size_t active,retained;
+#ifdef RAYA_ADAPTER_TESTING
+ size_t quarantine;
+#endif
  if (r) raya_adapter_destroy_result_init(r);
  if (!a || !a->initialized || !r) return RAYA_ADAPTER_DESTROY_INVALID;
  for (;;) {
@@ -649,6 +686,16 @@ raya_adapter_destroy_status raya_integrated_adapter_destroy_ex(
  EnterCriticalSection(&a->lock);
  active=a->active_count;
  retained=a->retained_count;
+#ifdef RAYA_ADAPTER_TESTING
+ quarantine=a->quarantine_count;
+ if ((quarantine==0)!=(a->quarantine_head==NULL)) {
+  LeaveCriticalSection(&a->lock);
+  r->status=RAYA_ADAPTER_DESTROY_INVALID;
+  r->retry=RAYA_ADAPTER_DESTROY_RETRY_RECONCILE;
+  r->step=2;
+  return r->status;
+ }
+#endif
  if ((retained==0)!=(a->retained_head==NULL)) {
   LeaveCriticalSection(&a->lock);
   r->status=RAYA_ADAPTER_DESTROY_INVALID;
@@ -659,7 +706,11 @@ raya_adapter_destroy_status raya_integrated_adapter_destroy_ex(
  LeaveCriticalSection(&a->lock);
  r->active=active;
  r->retained=retained;
- if (active!=0 || retained!=0) {
+ if (active!=0 || retained!=0
+#ifdef RAYA_ADAPTER_TESTING
+     || quarantine!=0
+#endif
+    ) {
   r->status=RAYA_ADAPTER_DESTROY_BUSY;
   r->retry=RAYA_ADAPTER_DESTROY_RETRY_RECONCILE;
   r->step=2;
@@ -897,6 +948,60 @@ int raya_adapter_test_retained_snapshot(raya_integrated_submit_adapter *a,
   ai[i].submitter_queue_count=(unsigned)a->submitter->queue_count;
  }
  LeaveCriticalSection(&a->submitter->lock);
+ return 1;
+}
+int raya_adapter_test_quarantine_snapshot(raya_integrated_submit_adapter *a,
+ raya_adapter_test_quarantine_item *items,size_t capacity,size_t *count) {
+ raya_adapter_envelope *item,*slow,*fast;
+ size_t actual=0,index=0;
+ if (count==NULL) return 0;
+ *count=0;
+ if (a==NULL || !a->initialized || (items==NULL && capacity!=0)) return 0;
+ EnterCriticalSection(&a->lock);
+ slow=a->quarantine_head;
+ fast=a->quarantine_head;
+ while (fast!=NULL && fast->quarantine_next!=NULL) {
+  slow=slow->quarantine_next;
+  fast=fast->quarantine_next->quarantine_next;
+  if (slow==fast) {
+   LeaveCriticalSection(&a->lock);
+   return -1;
+  }
+ }
+ for (item=a->quarantine_head;item!=NULL;item=item->quarantine_next) {
+  if (actual==(size_t)-1) {
+   LeaveCriticalSection(&a->lock);
+   return -1;
+  }
+  ++actual;
+ }
+ if (actual!=a->quarantine_count) {
+  LeaveCriticalSection(&a->lock);
+  return -1;
+ }
+ *count=actual;
+ if (capacity<actual) {
+  LeaveCriticalSection(&a->lock);
+  return -1;
+ }
+ for (item=a->quarantine_head;item!=NULL;item=item->quarantine_next) {
+  if (!item->quarantined || !item->transferred_degraded_quarantined ||
+      item->retained || item->operation_id==0 ||
+      !item->operation.identity_valid ||
+      item->operation.adapter_instance_id!=a->instance_id ||
+      item->operation.adapter_operation_id!=item->operation_id) {
+   *count=0;
+   LeaveCriticalSection(&a->lock);
+   return -1;
+  }
+  items[index].envelope_id=(uintptr_t)item;
+  items[index].operation_address=(uintptr_t)&item->operation;
+  items[index].adapter_instance_id=a->instance_id;
+  items[index].adapter_operation_id=item->operation_id;
+  items[index].degradation_cause=RAYA_RECOVERY_CAUSE_WAKE_SIGNAL;
+  ++index;
+ }
+ LeaveCriticalSection(&a->lock);
  return 1;
 }
 #endif

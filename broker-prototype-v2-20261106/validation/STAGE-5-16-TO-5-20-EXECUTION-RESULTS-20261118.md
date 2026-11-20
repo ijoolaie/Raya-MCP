@@ -691,3 +691,13 @@ Narrowed the `RAYA_ADAPTER_TESTING` handoff callback so it runs only after integ
 The prescribed integrated Adapter API build script passed 10/10 iterations under Visual Studio 2026 Build Tools 18.7.3 x64 and `/W4 /WX`: 10,810 Adapter API assertions, 1,200 strict dual-ACK assertions, 250 NOT_ISSUED notification assertions, and 310 Managed Worker WAIT_FAILED assertions (12,570 total). All 16 declared EXE/OBJ outputs were verified absent. No dedicated runtime owner-handoff-failure injection was added because it would require manufacturing invalid ownership state; that negative branch is source-verified.
 
 Gate 1: PASS for audited lock order and test-only cause-specific callback gate. Stage 5.18 remains PARTIAL because production atomic quarantine, versioned diagnostic visibility and bounded production wait are still unimplemented. Stage 5.16 strict dual-ACK acceptance remains unchanged. No uncertain record was released, unlinked, replayed, ACKed or reconciled.
+
+## 2026-11-20 — Stage 5.18 Gate 2 test-only atomic publication slice
+
+Implemented an independent test-only Adapter in-flight quarantine list, separate from Adapter retained and Worker v1 retained inventories. The WAKE_SIGNAL callback validates exact envelope/operation/Worker/Adapter identity and committed queue-owned state while Worker lock is held, then publishes once under Worker -> Adapter lock order. A separate read-only test snapshot validates list integrity. Adapter Destroy rejects non-empty test quarantine; a dedicated isolated assertion tests this with active/retained counts zero.
+
+The wake-failure process test now signals the Worker again only after publication while Worker lock remains held, forcing the awakened Worker to contend on that lock. After lock release it exits degraded; the test verifies one quarantine record, exact identity, preserved queue/outstanding/reservation/owner/collection and live resources, empty Adapter retained and Worker v1 inventories, no callback, and issuer lease retained.
+
+Validation: test build 10/10 iterations, 12,630 assertions PASS (10,870 Adapter API; 1,200 strict dual-ACK; 250 NOT_ISSUED; 310 WAIT_FAILED). Non-test-macro compile PASS. Non-test-macro Adapter native suite 10/10 x 1,020 = 10,200 PASS. All 18 declared EXE/OBJ outputs absent after scripts.
+
+Gate 2 remains PARTIAL: no negative publication-failure injection test or full multi-operation contention matrix yet. Production registry, versioned diagnostics and bounded production wait remain absent. No Production ABI/behavior, v1 inventory semantics, retained-record release, replay or reconciliation changed.

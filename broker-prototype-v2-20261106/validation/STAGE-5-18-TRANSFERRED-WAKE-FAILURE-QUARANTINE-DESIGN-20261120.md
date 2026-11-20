@@ -1,6 +1,6 @@
 # Stage 5.18 — Transferred Wake-Failure Quarantine and Worker Wake Observation Design
 
-Date: 2026-11-20  
+Date: 2026-11-20
 Status: DESIGN PROPOSAL — source-backed; not implemented  
 Scope: broker-prototype-v2 only. No Production behavior, recovery, retry, replay, or retained-record release is authorized by this document.
 
@@ -202,3 +202,63 @@ Immediate next slice: make the test seam cause-specific, with a negative owner-h
 The source/lock audit and test-only callback gating follow-up are recorded in `STAGE-5-18-GATE-1-SOURCE-LOCK-AUDIT-20261120.md`. The test-only handoff path now invokes its degraded callback only after integrated handoff and pipe-owner handoff succeed and the Worker wake signal fails. Owner-handoff invariant failure no longer invokes the callback. The full Adapter API build script passed 10/10 iterations (12,570 assertions total); all 16 declared EXE/OBJ outputs were verified absent. A dedicated runtime injection of owner-handoff failure was intentionally not added because it would require manufacturing invalid ownership state; the negative branch is source-verified.
 
 Gate 1 is PASS for the audited source/lock and test-only callback contract. This does not change the overall Stage 5.18 PARTIAL status: production atomic in-flight quarantine, versioned diagnostic inventory and bounded production wait remain outstanding. The callback/registry and bounded wait changes are not present in the non-test-macro Production path.
+
+# Stage 5.18 — Gate 2 deterministic test-only quarantine publication
+
+Date: 2026-11-20
+Status: PARTIAL — positive atomic-publication prototype evidence passed; publication-failure negative case and production implementation remain outstanding.
+
+## Scope
+
+This slice implements a **RAYA_ADAPTER_TESTING-only** independent in-flight quarantine registry. It does not add a production registry, production diagnostic API, Worker v1 inventory extension, recovery, cleanup, or reconciliation behavior.
+
+## Implementation
+
+- Added Adapter test-only `quarantine_head/quarantine_count` and a separate envelope `quarantine_next/quarantined` link/flag.
+- The existing Adapter retained list and its v1 inventory remain separate and unchanged.
+- The test-only quarantine callback is entered under Worker lock and validates:
+  - exact operation pointer matches the envelope's embedded operation;
+  - Worker epoch/operation identity and Adapter instance/operation identity match;
+  - integrated handoff and pipe-owner handoff have committed;
+  - the operation is still QUEUED at the Worker queue head;
+  - queue/outstanding/reservation/caller-active and collection/owner state are consistent;
+  - the operation is not already retained or quarantined.
+- Under the approved nested order Worker lock -> Adapter lock, it rejects duplicates and publishes the envelope to the independent quarantine list exactly once.
+- A test-only read-only snapshot checks list cycles/count consistency and copies envelope, operation and Adapter identity plus WAKE_SIGNAL cause.
+- Adapter Destroy rejects a non-empty quarantine registry. An isolated test proves this guard even when active and ordinary retained counts are zero.
+- The deterministic wake-failure test performs a second Worker wake only after quarantine publication while Worker lock is still held. The Worker thread wakes and must contend on that lock; after the callback returns it exits through the degraded path. The test verifies the queue-owned operation is visible in the quarantine registry and absent from both ordinary Adapter retained inventory and Worker v1 retained inventory.
+
+## Validation
+
+The prescribed `build-integrated-submit-adapter-v2-api-test.cmd` passed 10/10 iterations under Visual Studio 2026 Build Tools 18.7.3 x64 with `/W4 /WX`, exit code 0:
+- Adapter API regression: 10 x 1,087 assertions across 68 cases = 10,870 PASS.
+- Strict dual-ACK isolation: 10 x 120 = 1,200 PASS.
+- NOT_ISSUED notification isolation: 10 x 25 = 250 PASS.
+- Managed Worker WAIT_FAILED isolation: 10 x 31 = 310 PASS.
+- Total: 12,630 assertions PASS.
+
+Non-test-macro compatibility:
+- `build-integrated-submit-adapter-v2-compile.cmd`: PASS, exit code 0.
+- `build-integrated-submit-adapter-v2-native-test.cmd`: 10/10 runs, 1,020 assertions each = 10,200 PASS.
+- The test build, native test and compile scripts' declared outputs were checked; all 18 relevant EXE/OBJ paths were absent after completion.
+
+## Gate 2 disposition
+
+| Requirement | Result |
+|---|---|
+| Independent in-flight quarantine registry seam | PASS — test-only prototype |
+| Distinct from Adapter retained and Worker v1 retained inventory | PASS |
+| Exact envelope/operation/Adapter identity validation | PASS |
+| Duplicate publication rejection / one-record assertion | PASS |
+| Publication while Worker lock held | PASS — callback boundary and second-wake contention test |
+| Queue/outstanding/reservation/owner/collection preservation | PASS |
+| Worker and Adapter v1 retained inventories remain empty for this operation | PASS |
+| Adapter Destroy rejects quarantine-only state | PASS |
+| Negative publication-failure test | NOT RUN |
+| Full multi-operation/worker-contention stress matrix | NOT RUN |
+| Production registry and versioned diagnostics | NOT IMPLEMENTED |
+| Bounded production Worker wait | NOT IMPLEMENTED |
+
+**Gate 2 remains PARTIAL.** The positive test-only atomic publication seam is proven for the single-operation deterministic wake-failure fixture. Before production design acceptance, add a deterministic publication-failure negative test, broaden queue membership validation beyond a single queue head, and complete the bounded-wait and versioned-diagnostic gates. Do not reinterpret this test-only registry as production ownership/recovery support.
+
+No retained record was released, unlinked, replayed, ACKed or reconciled. No Production behavior, ABI, or v1 inventory semantics changed.

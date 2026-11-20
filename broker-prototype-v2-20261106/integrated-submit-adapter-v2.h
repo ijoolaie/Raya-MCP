@@ -76,6 +76,8 @@ typedef struct {
  volatile LONG lifecycle_state; /* high bit closes admission; low bits count API entrants */
 #ifdef RAYA_ADAPTER_TESTING
  BOOL test_signal_worker_wake_on_quarantine;
+ raya_adapter_envelope *quarantine_head;
+ size_t quarantine_count;
 #endif
  BOOL initialized;
 } raya_integrated_submit_adapter;
@@ -119,6 +121,13 @@ int raya_integrated_adapter_destroy(raya_integrated_submit_adapter *adapter);
 #include <stdint.h>
 typedef struct {
  uintptr_t envelope_id;
+ uintptr_t operation_address;
+ ULONGLONG adapter_instance_id;
+ ULONGLONG adapter_operation_id;
+ DWORD degradation_cause;
+} raya_adapter_test_quarantine_item;
+typedef struct {
+ uintptr_t envelope_id;
  ULONGLONG adapter_instance_id;
  ULONGLONG stable_operation_id;
  DWORD first_retain_cause;
@@ -155,6 +164,8 @@ int raya_adapter_test_retained_snapshot(raya_integrated_submit_adapter *adapter,
  raya_adapter_test_retained_item *adapter_items,size_t adapter_capacity,
  size_t *adapter_count,raya_worker_test_retained_item *worker_items,
  size_t worker_capacity,size_t *worker_count);
+ int raya_adapter_test_quarantine_snapshot(raya_integrated_submit_adapter *adapter,
+  raya_adapter_test_quarantine_item *items,size_t capacity,size_t *count);
 #endif
 #endif
 
