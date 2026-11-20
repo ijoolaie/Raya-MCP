@@ -88,7 +88,7 @@ For the narrow case where Worker terminal release has already succeeded and only
 
 1. Preserve the Adapter envelope and publish its Worker retained-inventory record exactly once, with immutable first-cause/stage evidence.
 2. Preserve the exact Submitter failure state and do not retry ACK. When ACK commits to ACKED but its notification fails, the Submitter is DEGRADED; other false-return causes (for example, a closed API gate or ACK invariant rejection) must be classified separately rather than assumed to have the same lifecycle result.
-3. Close admission for the affected Adapter through a separately specified close-only lifecycle operation; do not call Destroy from the Worker callback as a shortcut.
+3. Close admission for the affected Adapter through a private, idempotent gate-close primitive shared with `raya_integrated_adapter_destroy_ex`; do not call Destroy from the Worker callback as a shortcut. The primitive sets the existing high bit and leaves Adapter storage/lock intact.
 4. Do not degrade the shared Worker solely because this already-terminal operation's Submitter ACK notification failed. The Worker may continue processing independent operations from other Adapters; the retained envelope remains owned/quarantined and Worker Destroy remains blocked by the retained list.
 5. Preserve Worker degradation for actual Worker/operation ownership, wait, finalizer, close, or accounting failures. The exception must be narrowly typed to the post-terminal Adapter ACK failure and must not generalize to pre-terminal or uncertain I/O.
 
@@ -97,7 +97,7 @@ This candidate could let the same Worker terminally release a second independent
 ### Candidate A unresolved proof obligations
 
 - Define whether a Worker with one or more post-terminal Adapter ACK-retained records may continue serving other Adapters, and specify the exact lifecycle state/acceptance contract.
-- Define a public close-admission-only API and its concurrent-entrant semantics. Existing Destroy cannot be invoked as a proxy because it combines admission closure with destruction preconditions and is caller-serialized.
+- Define a private gate-close primitive and its concurrent-entrant semantics, then reuse it from Destroy. Existing Destroy cannot be invoked as a proxy from the Worker callback because it combines admission closure with destruction preconditions and is caller-serialized.
 - Prove that a Submitter ACK failure cannot leave an already-admitted same-Adapter producer able to issue new work after the Adapter gate closes; queued/active work must remain quarantined under the Submitter's existing DEGRADED behavior.
 - Prove Worker inventory publication, Adapter inventory publication, and envelope lifetime remain consistent while the Worker continues processing other operations.
 - Specify Worker shutdown/join behavior with retained post-terminal records. Worker Destroy must continue to reject nonempty retained inventory.
@@ -121,9 +121,9 @@ A further source trace checked whether closing the Adapter gate can prevent same
 - The submit path orders Worker admission, Submitter admission, Worker reservation, then Submitter enqueue (`integrated-submit-adapter-v2.c:437-499`).
 - Submitter admission accepts only lifecycle RUNNING (`dedicated-io-submitter-v2.c:264-280`); enqueue accepts RUNNING or STOPPING but not DEGRADED (`:282-307`). Therefore an entrant that has not yet been admitted when ACK failure degrades the Submitter cannot gain a new Submitter admission. An entrant admitted earlier but not yet enqueued will have enqueue rejected; it then follows the existing abort/NOT_ISSUED cleanup path, whose failures must continue to quarantine/degrade the Worker.
 - Work already enqueued/issued before the ACK failure is different: it is already committed and cannot be withdrawn by closing the Adapter gate. It remains subject to its existing Worker completion and one ACK attempt; any failure must retain its own envelope. No cancellation, replay, or cleanup shortcut is implied.
-- `adapter_destroy_ex` closes the gate before checking entrants/active/retained state, but it combines closure with destruction and is explicitly caller-serialized. A close-only operation must report the pre-existing entrant count and leave Adapter storage/lock intact; it must not destroy, drain, or free anything.
+- `adapter_destroy_ex` closes the gate before checking entrants/active/retained state, but it combines closure with destruction and is explicitly caller-serialized. The internal gate-close primitive must preserve the pre-existing entrant count and leave Adapter storage/lock intact; it must not destroy, drain, or free anything. A read-only result may expose the entrant count to the test fixture, but no new public API is assumed.
 
-This narrows the race but does not close the proof obligation. The future close-only API must be linearized against `adapter_enter`; the test must hold an entrant at each meaningful boundary (before Submitter admission, after admission/before enqueue, and after enqueue/issue) and assert only the documented outcome. If an already-issued same-Adapter request remains, it must be allowed only through the existing terminal path and its exact ACK result; no new issue may occur after Submitter DEGRADED. Any cleanup failure in a pre-issue entrant remains a Worker-level failure and must stop the Worker.
+This narrows the race but does not close the proof obligation. The internal gate-close primitive must be linearized against `adapter_enter`; the test must hold an entrant at each meaningful boundary (before Submitter admission, after admission/before enqueue, and after enqueue/issue) and assert only the documented outcome. If an already-issued same-Adapter request remains, it must be allowed only through the existing terminal path and its exact ACK result; no new issue may occur after Submitter DEGRADED. Any cleanup failure in a pre-issue entrant remains a Worker-level failure and must stop the Worker.
 
 ### Candidate A proposed state contract and strict acceptance test
 
@@ -154,3 +154,13 @@ The test must not treat a request as OS-issued merely because it was Adapter-sub
 #### Test-fixture teardown gate
 
 The expected successful acceptance result deliberately leaves two retained Adapter envelopes and two Worker retained records. Current public Adapter/Worker/Submitter Destroy contracts reject these states; they do not provide a safe cleanup route. Therefore the test cannot call Destroy, manually close handles, zero structures, free retained envelopes, or pretend the retained records were reconciled. Before implementing this test, the project must approve either (a) a narrow test-fixture lifecycle contract that preserves and safely disposes the process-isolated fixture, or (b) an explicitly process-isolated test executable whose process boundary is part of the test contract. This test teardown decision is independent of the Production quarantine policy.
+
+### Addendum - Worker retained-inventory/lifecycle boundary confirmed
+
+The final bounded source check confirmed the key precondition for Candidate A:
+
+- `raya_managed_worker_admit` delegates to `raya_reaper_integrated_admit` under the Worker lock; `raya_managed_worker_reserve` delegates to Integrated reserve. Neither checks `retained_count` (`reaper-managed-worker-v2.c:403-434`).
+- `raya_reaper_integrated_can_exit` checks only `reserved_slots`, Registry count, and the Integrated Core exit predicate; it does not check the Worker diagnostic retained list (`reaper-integrated-v2.c:224-227`).
+- Worker `Destroy` does check `retained_count==0 && retained_head==NULL` (`reaper-managed-worker-v2.c:807-824`).
+
+Therefore the current data model already separates the retained inventory from active admission/dispatch and from the Worker thread's drain predicate, while retaining a hard Destroy guard. This supports the feasibility of keeping the shared Worker operational after a *successfully published, already-terminal Adapter ACK-retained record*. It does not prove that changing the current unconditional degradation policy is acceptable or safe; that is the architecture decision still requiring review. The narrow exception must never apply to an operation whose terminal/finalizer/accounting release has not succeeded.
