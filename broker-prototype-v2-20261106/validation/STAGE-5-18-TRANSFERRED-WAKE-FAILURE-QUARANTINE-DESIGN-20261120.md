@@ -187,3 +187,13 @@ Not authorized by this design step:
 - Stage 5 / Phase 1: NOT ACCEPTED. Production: NO-GO.
 
 No source, header, ABI, test, build, runtime, ownership, retention, cleanup, recovery, retry, callback, or replay behavior was changed. No tests/builds are claimed.
+
+## 11. 2026-11-20 Gate 1 source/lock audit addendum
+
+Audit report: `validation/STAGE-5-18-GATE-1-SOURCE-LOCK-AUDIT-20261120.md`.
+
+The Worker, Adapter and Submitter lock acquisitions and callback boundaries were audited in the current worktree. No Adapter-lock -> Worker-lock nested acquisition was found in the audited modules. Submitter issue/publish/not-issued callbacks run outside Submitter lock; the Worker release callback runs outside Worker lock. The only current nested Worker -> Adapter lock is the test-only transferred-degraded callback, matching the proposed direction.
+
+Gate 1 is **PARTIAL**, not PASS: the current test-only handoff hook invokes its callback for any TRANSFERRED_DEGRADED result, covering both pipe-owner handoff failure (OWNERSHIP_INVARIANT) and wake signal failure (WAKE_SIGNAL). It does not yet enforce WAKE_SIGNAL-only invocation. The test callback also uses the existing Adapter retained list rather than a distinct production in-flight quarantine registry. The production wait remains INFINITE; the 100 ms finite wait remains test-only.
+
+Immediate next slice: make the test seam cause-specific, with a negative owner-handoff-failure case proving the quarantine callback is not invoked. No code, ABI, v1 inventory, ownership, retention, recovery or cleanup behavior changed in this audit. No tests/builds were run.

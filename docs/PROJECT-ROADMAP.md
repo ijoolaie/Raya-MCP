@@ -417,3 +417,7 @@ Phase 1 remains IN PROGRESS / NOT ACCEPTED. Production filesystem handlers are s
 
 ## 2026-11-20 � Stage 5.18 wake-failure design gate
 The source-backed proposal is `broker-prototype-v2-20261106/validation/STAGE-5-18-TRANSFERRED-WAKE-FAILURE-QUARANTINE-DESIGN-20261120.md`. Next prototype slice is atomic publication of a distinct `TRANSFERRED_DEGRADED_PENDING` Adapter in-flight record under Worker->Adapter lock order, paired with a finite production wait and lock-protected DEGRADED check. Keep queue/reservation ownership distinct from Worker retained records and preserve v1 inventory semantics. Implementation is not yet complete; Stage 5.18 remains PARTIAL and Production remains NO-GO.
+
+## 2026-11-20 — Stage 5.18 Gate 1 audit outcome
+
+Gate 1 source/lock audit is PARTIAL. Lock-order prerequisite passed for audited modules (no nested Adapter -> Worker lock; Submitter and Worker callback boundaries verified), but the test-only degraded-handoff callback does not distinguish WAKE_SIGNAL from OWNERSHIP_INVARIANT and is not yet a valid WAKE_SIGNAL-only publication gate. Production atomic quarantine registry and bounded Worker wait remain unimplemented. Next: cause-specific test hook + negative owner-handoff-failure assertion, then Gate 2 deterministic publication. Preserve Stage 5.16 strict dual-ACK criterion and all v1 inventory semantics; no recovery/replay/cleanup authorization.

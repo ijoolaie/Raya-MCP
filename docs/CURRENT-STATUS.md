@@ -644,3 +644,7 @@ Phase 1 remains IN PROGRESS / NOT ACCEPTED. Production filesystem handlers remai
 
 ## 2026-11-20 � Stage 5.18 design decision
 See `broker-prototype-v2-20261106/validation/STAGE-5-18-TRANSFERRED-WAKE-FAILURE-QUARANTINE-DESIGN-20261120.md`. The selected prototype direction is atomic Adapter in-flight quarantine publication at the Worker-locked handoff boundary plus bounded Worker wait to observe DEGRADED. The queue-owned uncertain operation is not a Worker POST_TERMINAL retained record; v1 inventory semantics must remain unchanged. Design only; implementation and runtime evidence remain outstanding. Stage 5.18 PARTIAL; Stage 5.20 INCOMPLETE; Production NO-GO.
+
+## 2026-11-20 — Stage 5.18 Gate 1 source/lock audit
+
+Read-only source audit: `broker-prototype-v2-20261106/validation/STAGE-5-18-GATE-1-SOURCE-LOCK-AUDIT-20261120.md`. No Adapter -> Worker nested lock acquisition was found in the audited Worker/Adapter/Submitter modules; Submitter callbacks run outside Submitter lock and Worker release callback outside Worker lock. Gate 1 remains PARTIAL: the existing test-only handoff callback fires for both WAKE_SIGNAL and OWNERSHIP_INVARIANT degraded handoffs, so cause-specific gating is not yet proven. The hook uses the existing Adapter retained list, not a distinct production in-flight registry. Production wait remains INFINITE; bounded wait is test-only. No code or runtime behavior changed and no tests/builds were run. Stage 5.18 PARTIAL; Phase 1 NOT ACCEPTED; Production NO-GO.
