@@ -601,8 +601,9 @@ static DWORD WINAPI managed_worker_main(void *parameter) {
                 SetLastError(injected_error);
                 wr = WAIT_FAILED;
             } else {
+                /* Test-only finite wait after a non-failing test hook. */
                 wr = WaitForMultipleObjects(plan.waitset.handle_count,
-                    plan.waitset.handles, FALSE, INFINITE);
+                    plan.waitset.handles, FALSE, 100);
             }
         } else {
             /* Test-only finite wait: independently observe a missed wake signal. */

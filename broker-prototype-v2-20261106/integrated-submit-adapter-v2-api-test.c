@@ -1589,9 +1589,13 @@ static int test_multi_operation_wake_failure_rejected(void) {
  CHECK(a.quarantine_count==0 && a.quarantine_head==NULL);
  CHECK(a.active_count==2 && callbacks==0);
  CHECK(w.retained_count==0 && w.retained_head==NULL && w.integrated.registry.count==0);
- CHECK(WaitForSingleObject(w.thread,0)==WAIT_TIMEOUT);
- CHECK(!raya_integrated_adapter_destroy(&a));
  CHECK(SetEvent(wait_state.release));
+ deadline=GetTickCount()+5000;
+ while (WaitForSingleObject(w.thread,0)!=WAIT_OBJECT_0 &&
+        (LONG)(deadline-GetTickCount())>0) Sleep(1);
+ CHECK(WaitForSingleObject(w.thread,0)==WAIT_OBJECT_0);
+ { DWORD exit_code=0; CHECK(GetExitCodeThread(w.thread,&exit_code)); CHECK(exit_code==ERROR_INVALID_STATE); }
+ CHECK(!raya_integrated_adapter_destroy(&a));
  /* Keep committed operations and resources intact until process exit. */
  (void)client; (void)server;
  return 0;
