@@ -13,6 +13,8 @@ for /L %%i in (1,1,10) do (
  if errorlevel 1 goto :failed
  integrated-submit-adapter-v2-api-test.exe --quarantine-publication-failed
  if errorlevel 1 goto :failed
+ integrated-submit-adapter-v2-api-test.exe --multi-operation-wake-failure
+ if errorlevel 1 goto :failed
  integrated-submit-adapter-v2-api-test.exe
  if errorlevel 1 goto :failed
 )
