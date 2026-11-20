@@ -218,3 +218,54 @@ This is an experimental broker-prototype architecture change only. It does not a
 - Candidate B dispatcher: NOT SELECTED.
 - Production wiring: NOT AUTHORIZED.
 - Strict 5.16 runtime proof: NOT YET RUN / NOT COMPLETE.
+
+## Implementation and strict runtime acceptance result - 2026-11-20
+
+<supersedes the earlier proposal-only, unimplemented, and teardown-blocked dispositions above>
+
+**Stage 5.16 strict dual-post-terminal-ACK criterion: COMPLETE in the broker-prototype branch.** The owner selected preservation of the strict criterion; Candidate A is now implemented and exercised without relaxing the criterion or bypassing the Worker's DEGRADED exit for actual Worker failures.
+
+### Implemented contract
+
+- `dedicated-io-submitter-v2.h/.c`: added `raya_submitter_acknowledge_ex` and typed outcomes `SUCCESS`, `COMMITTED_NOTIFICATION_FAILED`, `NOT_COMMITTED_FAILURE`, `API_GATE_CLOSED`, and `INVALID_ARGUMENT`. The existing Boolean `raya_submitter_acknowledge` remains as a compatibility wrapper and returns true only for `SUCCESS`.
+- `COMMITTED_NOTIFICATION_FAILED` is returned only after the request has transitioned to ACKED and its issuer lease has been released, but a changed/wake notification failed and the Submitter was degraded. Pre-commit wait/state/lease failures and API-gate rejection are distinct and do not qualify for the exception.
+- `integrated-submit-adapter-v2.c`: only that exact typed result uses Adapter-local post-terminal retention. The path publishes the envelope in both Adapter and Worker retained inventories once, suppresses callback/free, does not retry ACK, and returns directly to the Worker dispatch loop without degrading or waking the shared Worker. It is guarded by the post-handoff/terminal-release state established by the existing lifecycle path.
+- Failed Adapter/Worker retained publication, API-gate rejection, pre-commit ACK failure, and all other non-success results preserve the existing Worker-degrading fail-closed path. No Worker dispatch continues after a Worker-level failure.
+- The Adapter API gate remains open. The affected Submitter's DEGRADED lifecycle rejects new admission and enqueue; a new Adapter submission is observed rejected before another OS Issue. Already queued work remains quarantined; no replay or cleanup shortcut is introduced.
+- `RAYA_RECOVERY_CAUSE_SUBMITTER_ACK_NOTIFICATION` is an additive retained-record diagnostic (`1u<<6`) and is deliberately excluded from the recovery-policy evaluator's recognized Worker-degradation causes. The evaluator therefore remains fail-closed if this diagnostic is accidentally supplied as a Worker degradation cause.
+- Worker shutdown/join can complete after active reservations and Registry work drain; Worker Destroy still rejects a nonempty retained inventory. No retained record is unlinked, freed, reconciled, or released.
+
+### Strict acceptance evidence
+
+The API test now has a dedicated `--strict-dual-ack` process mode. `build-integrated-submit-adapter-v2-api-test.cmd` launches that mode as a separate process before the normal suite on each of 10 iterations. This process boundary is intentional: the two retained Adapter envelopes and Worker records remain intact until that dedicated test process exits. The default suite no longer runs the retained fixture and then reuses its stack storage.
+
+The strict scenario uses one real shared Managed Worker, two independent Adapter/Submitter pairs, and two separate real named-pipe READ operations. Before either client writes data, the test waits until both `ReadFile` callbacks have run and the same Worker reports `outstanding==2` and `registry.count==2`. It then completes both operations; each operation's finalizer-close boundary arms one independent changed-event ACK-notification failure for its own Submitter.
+
+Observed and asserted:
+
+- both operations were independently OS-issued and simultaneously outstanding/registered on the same Worker before completion;
+- each operation reached its own terminal/finalizer/owner/Integrated release path and its own single ACK-notification failure;
+- each Submitter is DEGRADED, each request is ACKED, and both issuer leases/queues/active issue counts are zero;
+- each Adapter has exactly one retained envelope and the Worker has exactly two matching `POST_TERMINAL` records with distinct Adapter identity pairs;
+- both owner and finalizer states are RELEASED; no user callback is delivered;
+- the shared Worker remains ACCEPTING after both retained publications and shuts down/joins normally; its Destroy remains blocked by the retained list;
+- a subsequent submission through an affected Adapter is rejected without another OS Issue;
+- production Adapter v1 and Worker v1 inventories return the two matching identity pairs; the optional test-only validator also accepts the two-plane snapshot.
+
+### Validation results
+
+- Standard API regression: `/W4 /WX`; 10 isolated strict runs, 107 assertions each; 10 normal-suite runs, 863 assertions across 66 cases each. PASS.
+- `RAYA_ADAPTER_TESTING` API regression: `/W4 /WX`; 10 isolated strict runs, 120 assertions each; 10 normal-suite runs, 1,048 assertions across 68 cases each. PASS.
+- Recovery policy: 16 assertions, 0 failures. The new retained-only cause is explicitly verified BLOCKED by the Worker recovery-policy evaluator.
+- Dedicated Submitter native core: 18 assertions per run, 25 consecutive runs PASS.
+- Build scripts cleaned their declared EXE/OBJ outputs. `git diff --check` PASS.
+
+### Updated Stage 5 disposition
+
+- Stage 5.16: **COMPLETE** for the unchanged strict dual-post-terminal-ACK criterion in the broker-prototype branch.
+- Stage 5.19: **COMPLETE** within the frozen v1 contract of independent per-plane copied inventories under each plane's quiescence preconditions. The strict runtime scenario now proves two Worker v1 records and one Adapter v1 record for each Adapter, with matching identity pairs. No atomic cross-plane snapshot is claimed or required.
+- Stage 5.18: remains PARTIAL; its separate deterministic reserve-rejection and invariant-guard evidence gaps are unchanged.
+- Stage 5.20: remains INCOMPLETE; no safe positive recovery/reconciliation action is approved.
+- Gate D: COMPLETE / NO ACTION APPROVED. Gate E: BLOCKED. Gate F: pending complete Stage 5/Phase 1 owner acceptance and PR review. Stage 5/Phase 1 remain NOT ACCEPTED; Production remains NO-GO.
+
+This is broker-prototype-only. It does not authorize Production wiring, reconciliation/release, retry, replay, callback redelivery, or changes to the Phase 1 recovery policy.

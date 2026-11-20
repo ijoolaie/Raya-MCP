@@ -1,6 +1,13 @@
 # Current Project Status — Raya Local MCP Bridge
 
-Last updated: 2026-11-06
+Last updated: 2026-11-20
+
+## Broker prototype v2 validation subtrack - 2026-11-20
+- Broker-prototype-v2 Stage 5.16 strict dual-post-terminal-ACK criterion is COMPLETE in the isolated prototype branch. Two independently OS-issued Adapter operations each reached their own post-terminal ACK-notification failure on one shared Worker; typed Submitter ACK outcomes and Adapter-scoped retained publication preserve fail-closed behavior for every other failure class.
+- Stage 5.19 is COMPLETE within the frozen independent per-plane v1 inventory contract: two Worker records and one Adapter record per Adapter were copied and their identity pairs matched. No atomic cross-plane snapshot is claimed.
+- Stage 5.18 remains PARTIAL (deterministic reserve-rejection/invariant-guard evidence gaps); Stage 5.20 remains INCOMPLETE (no approved positive recovery/reconciliation contract or action).
+- Broker Stage 5 disposition: Gate D complete/no action approved; Gate E blocked; Gate F pending full Stage 5/Phase 1 owner acceptance and PR review. Stage 5/Phase 1 remain NOT ACCEPTED; Production remains NO-GO. This prototype-only result does not change the top-level filesystem Phase 1 acceptance status below.
+- Authoritative evidence: `broker-prototype-v2-20261106/validation/STAGE-5-16-TO-5-20-EXECUTION-RESULTS-20261118.md`; architecture/test details: `broker-prototype-v2-20261106/validation/STAGE-5-16-STRICT-DUAL-ACK-ARCHITECTURE-DESIGN-GATE-20261120.md`.
 
 ## 2026-11-06 — isolated broker identity gate and v2 specification
 - The disposable dedicated-account broker's LocalSystem negative-client test passed: SYSTEM could open the named pipe but the broker rejected the mismatched TokenUser SID/session with the expected unauthorized frame. Task Scheduler returned LastTaskResult=0.

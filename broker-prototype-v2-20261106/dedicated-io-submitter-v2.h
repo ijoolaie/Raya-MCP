@@ -50,6 +50,14 @@ typedef enum {
 } raya_submitter_result;
 
 typedef enum {
+ RAYA_SUBMITTER_ACK_SUCCESS=1,
+ RAYA_SUBMITTER_ACK_COMMITTED_NOTIFICATION_FAILED=2,
+ RAYA_SUBMITTER_ACK_NOT_COMMITTED_FAILURE=3,
+ RAYA_SUBMITTER_ACK_API_GATE_CLOSED=4,
+ RAYA_SUBMITTER_ACK_INVALID_ARGUMENT=5
+} raya_submitter_ack_status;
+
+typedef enum {
  RAYA_SUBMITTER_EFFECT_NOT_ATTEMPTED=0,
  RAYA_SUBMITTER_EFFECT_IN_PROGRESS=1,
  RAYA_SUBMITTER_EFFECT_COMMITTED=2,
@@ -143,7 +151,10 @@ raya_submitter_result raya_submitter_enqueue(raya_dedicated_submitter *s,
  raya_submitter_request *request);
 int raya_submitter_abort_admission(raya_dedicated_submitter *s,
  raya_submitter_request *request);
-/* Returns 0 if ACK state is terminal but lifecycle signaling fails; caller must retain request storage. */
+/* Typed result distinguishes committed ACK with failed notification from pre-commit failure. */
+raya_submitter_ack_status raya_submitter_acknowledge_ex(raya_dedicated_submitter *s,
+ raya_submitter_request *request);
+/* Compatibility wrapper: returns true only for RAYA_SUBMITTER_ACK_SUCCESS. */
 int raya_submitter_acknowledge(raya_dedicated_submitter *s,
  raya_submitter_request *request);
 /* Lifecycle calls bypass the operational gate and require one serialized cleanup

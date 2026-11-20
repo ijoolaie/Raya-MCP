@@ -569,3 +569,35 @@ Neither option is selected by this execution pass. The prior delegated Stage 5.2
 ## 2026-11-20 owner decision: preserve strict Stage 5.16 criterion
 
 The project owner selected preservation of the strict dual-post-terminal-ACK acceptance criterion. Two distinct Adapter/Submitter operations must each be independently OS-issued and each reach its own post-terminal ACK failure/retention path on the same shared Worker. Stage 5.19 remains dependent on this exact proof. A separately reviewed architecture-design work item is authorized; no architecture candidate is selected and no implementation, Production behavior change, test hook, recovery action, or relaxation of fail-closed semantics is authorized by this decision. The design gate and required ownership/lifecycle questions are recorded in validation/STAGE-5-16-STRICT-DUAL-ACK-ARCHITECTURE-DESIGN-GATE-20261120.md. Stage 5.16/5.19 remain PARTIAL; Stage 5.18 PARTIAL; Stage 5.20 INCOMPLETE; Gate D NO ACTION APPROVED; Gate E BLOCKED; Gate F pending review/acceptance; Stage 5/Phase 1 NOT ACCEPTED; Production NO-GO. Documentation only; no tests/builds run.
+
+## 2026-11-20 Stage 5.16 strict dual-ACK implementation and acceptance result
+
+The owner selected preservation of the strict Stage 5.16 criterion. Candidate A was implemented in the broker-prototype branch and the original criterion was not relaxed.
+
+Implementation summary:
+- Added `raya_submitter_acknowledge_ex` with typed outcomes. The compatibility Boolean `raya_submitter_acknowledge` remains and returns true only for SUCCESS.
+- Only ACK_COMMITTED_NOTIFICATION_FAILED (request ACKED, issuer lease released, notification failed, Submitter DEGRADED) enters Adapter-scoped post-terminal quarantine without degrading the shared Worker.
+- Adapter and Worker retained records are published exactly once; callback/free and ACK retry are suppressed. All other ACK failures, retained-publication failures, and Worker/operation lifecycle failures preserve Worker DEGRADED fail-closed behavior.
+- Added retained-only cause `RAYA_RECOVERY_CAUSE_SUBMITTER_ACK_NOTIFICATION` (bit 6), excluded from the Worker recovery-policy evaluator's accepted degradation mask; the policy test verifies it remains BLOCKED if used as a Worker degradation cause.
+- Added a dedicated `--strict-dual-ack` test mode and updated the API test build script to run that mode as its own process before the regular suite. This keeps intentionally retained fixture storage valid until process exit; the regular suite does not reuse its stack storage.
+
+Strict runtime test proves two real named-pipe READ operations from two distinct Adapter/Submitter pairs are both OS-issued and simultaneously outstanding/registered on the same Worker (`ReadFile` call count 1 each, Worker outstanding 2, Registry count 2) before either completion is released. Each then reaches its own terminal/finalizer/owner/Integrated release and independent post-terminal ACK-notification failure. The test verifies two Adapter retained records, two matching Worker POST_TERMINAL records, two identity pairs, both Submitters DEGRADED with ACKED requests and zero issuer leases, no callback delivery, no second OS Issue after Submitter degradation, shared Worker remains ACCEPTING, orderly Worker shutdown/join, and Destroy remains blocked by retained inventory. Production Adapter v1 and Worker v1 inventory copies match both identity pairs. No retained record is unlinked or freed.
+
+Validation:
+- Standard API build `/W4 /WX`: 10 isolated strict runs, 107 assertions each; 10 regular-suite runs, 863 assertions across 66 cases each. PASS.
+- `RAYA_ADAPTER_TESTING` API build `/W4 /WX`: 10 isolated strict runs, 120 assertions each; 10 regular-suite runs, 1,048 assertions across 68 cases each. PASS.
+- Recovery policy: 16 assertions, 0 failures.
+- Dedicated Submitter native core: 18 assertions per run, 25 consecutive runs PASS.
+- Build scripts removed their declared EXE/OBJ outputs; `git diff --check` PASS.
+
+### Revised acceptance register
+
+| Area | Updated evidence-backed status | Remaining gap |
+|---|---|---|
+| Stage 5.16 | **COMPLETE** for the unchanged strict dual-post-terminal-ACK criterion in the broker-prototype branch. | No Stage 5.16 strict runtime gap remains in this bounded criterion. Production wiring is not authorized. |
+| Stage 5.19 | **COMPLETE** within the frozen v1 contract: independent per-plane copied inventories after each plane's quiescence preconditions. The strict scenario proves two Worker v1 records and one Adapter v1 record for each Adapter, with matching identity pairs. | No atomic cross-plane snapshot is required or claimed. |
+| Stage 5.18 | PARTIAL. | Deterministic DIRECT/Adapter reserve-rejection branches and remaining runtime invariant-guard evidence gaps remain. |
+| Stage 5.20 | INCOMPLETE. | Production per-record effect/receipt evidence and safe reconciliation contract remain absent; no positive action is approved. |
+| Gate D / E / F | D COMPLETE / NO ACTION APPROVED; E BLOCKED; F pending explicit owner acceptance and PR review. | Positive recovery remains unauthorized; full Phase 1 acceptance is not met. |
+
+Stage 5/Phase 1 remain NOT ACCEPTED. Production remains NO-GO. The implementation is confined to the broker-prototype branch and does not authorize Production wiring, reconciliation/release, retry, replay, callback redelivery, or changes to the Phase 1 recovery policy.

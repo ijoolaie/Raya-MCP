@@ -5,6 +5,8 @@ if errorlevel 1 exit /b %errorlevel%
 cl.exe /nologo /W4 /WX /TC dedicated-io-submitter-v2.c reaper-recovery-policy-v2.c reaper-core-v2.c reaper-registry-v2.c reaper-integrated-v2.c reaper-window-v2.c reaper-waitset-v2.c reaper-waitplan-v2.c pipe-completion-context-v2.c pipe-io-owner-v2.c pipe-io-finalizer-v2.c reaper-managed-worker-v2.c integrated-submit-adapter-v2.c integrated-submit-adapter-v2-api-test.c /link /OUT:integrated-submit-adapter-v2-api-test.exe
 if errorlevel 1 goto :failed
 for /L %%i in (1,1,10) do (
+ integrated-submit-adapter-v2-api-test.exe --strict-dual-ack
+ if errorlevel 1 goto :failed
  integrated-submit-adapter-v2-api-test.exe
  if errorlevel 1 goto :failed
 )

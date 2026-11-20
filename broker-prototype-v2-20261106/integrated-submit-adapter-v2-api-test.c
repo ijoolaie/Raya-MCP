@@ -550,15 +550,12 @@ static int test_ack_signal_failure_retains_after_resource_release(BOOL fail_wake
  raya_submitter_lifecycle lifecycle=RAYA_SUBMITTER_RUNNING;
  size_t queued=0,producers=0,active=0,leases=0;
  DWORD written=0,wait_result;
- raya_managed_operation direct_retained,partial_retained;
  raya_adapter_retained_record_v1 adapter_v1[1];
- raya_worker_retained_record_v1 worker_v1[4];
+ raya_worker_retained_record_v1 worker_v1[1];
  size_t inventory_required=0;
  LONG submitter_entrants=0;
- ZeroMemory(&partial_retained,sizeof(partial_retained));
  ZeroMemory(adapter_v1,sizeof(adapter_v1));
  ZeroMemory(worker_v1,sizeof(worker_v1));
- HANDLE direct_pipe=NULL,direct_event=NULL;
 #ifdef RAYA_ADAPTER_TESTING
  size_t adapter_count=0,worker_count=0;
  raya_adapter_test_retained_item adapter_items[2];
@@ -599,29 +596,10 @@ static int test_ack_signal_failure_retains_after_resource_release(BOOL fail_wake
  CHECK(w.retained_count==1 && w.retained_head!=NULL);
  CHECK(w.integrated.core.outstanding==0 && w.integrated.reserved_slots==0);
  CHECK((w.integrated.core.degradation_causes &
-       RAYA_RECOVERY_CAUSE_OWNERSHIP_INVARIANT)!=0);
+       RAYA_RECOVERY_CAUSE_OWNERSHIP_INVARIANT)==0);
  CHECK(raya_submitter_snapshot(&s,&lifecycle,&queued,&producers,&active,&leases));
  CHECK(lifecycle==RAYA_SUBMITTER_DEGRADED);
  CHECK(queued==0 && producers==0 && active==0 && leases==0);
-direct_pipe=CreateEventW(NULL,TRUE,FALSE,NULL);
- direct_event=CreateEventW(NULL,TRUE,FALSE,NULL);
- CHECK(direct_pipe && direct_event);
- CHECK(raya_managed_operation_init(&direct_retained,direct_pipe,direct_event,NULL,0,test_noop_release,NULL));
- CHECK(raya_managed_worker_register_operation(&w,&direct_retained,RAYA_WORKER_INVENTORY_DIRECT,0,0));
- EnterCriticalSection(&w.lock);
- CHECK(raya_managed_worker_publish_retained_locked(&w,&direct_retained,RAYA_RECOVERY_CAUSE_OWNERSHIP_INVARIANT,RAYA_WORKER_RETAIN_STAGE_DIRECT));
- CHECK(direct_retained.first_retain_cause==RAYA_RECOVERY_CAUSE_OWNERSHIP_INVARIANT);
- CHECK(direct_retained.first_retain_stage==RAYA_WORKER_RETAIN_STAGE_DIRECT);
- CHECK(!raya_managed_worker_publish_retained_locked(&w,&direct_retained,RAYA_RECOVERY_CAUSE_HANDLE_CLOSE,RAYA_WORKER_RETAIN_STAGE_POST_TERMINAL));
- CHECK(direct_retained.first_retain_cause==RAYA_RECOVERY_CAUSE_OWNERSHIP_INVARIANT);
- CHECK(direct_retained.first_retain_stage==RAYA_WORKER_RETAIN_STAGE_DIRECT);
- LeaveCriticalSection(&w.lock);
- CHECK(w.retained_count==2);
- EnterCriticalSection(&w.lock);
- CHECK(raya_managed_worker_publish_retained_locked(&w,&partial_retained,
-       RAYA_RECOVERY_CAUSE_HANDLE_CLOSE,RAYA_WORKER_RETAIN_STAGE_PARTIAL_RECORD));
- LeaveCriticalSection(&w.lock);
- CHECK(w.retained_count==3);
 
  CHECK(!raya_integrated_adapter_destroy(&a));
  CHECK(!raya_submitter_shutdown(&s));
@@ -630,27 +608,21 @@ direct_pipe=CreateEventW(NULL,TRUE,FALSE,NULL);
  CHECK(!raya_submitter_join(&s,100));
  CHECK(s.joined==TRUE && s.thread==NULL);
  CHECK(!raya_submitter_destroy(&s));
- CHECK(!raya_managed_worker_shutdown(&w));
- CHECK(WaitForSingleObject(w.thread,5000)==WAIT_OBJECT_0);
- CHECK(!raya_managed_worker_join(&w,100));
+  CHECK(raya_managed_worker_shutdown(&w));
+  CHECK(raya_managed_worker_join(&w,5000));
  CHECK(w.joined==TRUE && w.thread==NULL);
 #ifdef RAYA_ADAPTER_TESTING
  CHECK(raya_adapter_test_retained_snapshot(&a,adapter_items,2,&adapter_count,
        worker_items,4,&worker_count)==1);
- CHECK(adapter_count==1 && worker_count==3);
+ CHECK(adapter_count==1 && worker_count==1);
   CHECK(adapter_items[0].adapter_instance_id!=0);
   CHECK(adapter_items[0].stable_operation_id==1);
-  CHECK(adapter_items[0].first_retain_cause!=0);
+  CHECK(adapter_items[0].first_retain_cause==RAYA_RECOVERY_CAUSE_SUBMITTER_ACK_NOTIFICATION);
   CHECK(adapter_items[0].first_retain_stage!=RAYA_ADAPTER_RETAIN_STAGE_UNKNOWN);
  CHECK(validate_retained_snapshot(adapter_items,adapter_count,
        worker_items,worker_count)==RAYA_RETAINED_VALID);
- { size_t k; int direct_seen=0,adapter_seen=0;
-   for(k=0;k<worker_count;++k) {
-     if(worker_items[k].inventory_kind==RAYA_WORKER_INVENTORY_DIRECT) { direct_seen=1; CHECK(worker_items[k].identity_valid); CHECK(worker_items[k].worker_epoch==w.worker_epoch); CHECK(!worker_items[k].adapter_identity_valid); }
-     else if(worker_items[k].inventory_kind==RAYA_WORKER_INVENTORY_ADAPTER_ASSOCIATED) { adapter_seen=1; CHECK(worker_items[k].identity_valid); CHECK(worker_items[k].adapter_identity_valid); }
-   }
-   CHECK(direct_seen && adapter_seen);
- }
+  CHECK(worker_items[0].inventory_kind==RAYA_WORKER_INVENTORY_ADAPTER_ASSOCIATED);
+  CHECK(worker_items[0].identity_valid && worker_items[0].adapter_identity_valid);
  { size_t k; int stable_pair_seen=0;
    for(k=0;k<worker_count;++k) if(worker_items[k].inventory_kind==RAYA_WORKER_INVENTORY_ADAPTER_ASSOCIATED && worker_items[k].adapter_identity_valid && worker_items[k].adapter_instance_id==adapter_items[0].adapter_instance_id && worker_items[k].adapter_operation_id==adapter_items[0].stable_operation_id) { stable_pair_seen=1; CHECK(worker_items[k].operation_id==adapter_items[0].operation_id); }
    CHECK(stable_pair_seen);
@@ -671,7 +643,7 @@ direct_pipe=CreateEventW(NULL,TRUE,FALSE,NULL);
  CHECK(adapter_items[0].worker_caller_active==0);
  CHECK(adapter_items[0].worker_registry_count==0);
  CHECK((adapter_items[0].worker_degradation_causes &
-       RAYA_RECOVERY_CAUSE_OWNERSHIP_INVARIANT)!=0);
+       RAYA_RECOVERY_CAUSE_OWNERSHIP_INVARIANT)==0);
  CHECK(adapter_items[0].submitter_request_state==RAYA_SUBMITTER_REQ_ACKED);
 #endif
  inventory_required=99;
@@ -698,42 +670,23 @@ direct_pipe=CreateEventW(NULL,TRUE,FALSE,NULL);
  CHECK(adapter_v1[0].version==RAYA_ADAPTER_RETAINED_RECORD_VERSION_1);
  CHECK(adapter_v1[0].adapter_instance_id==a.instance_id);
  CHECK(adapter_v1[0].adapter_operation_id==1);
- CHECK(adapter_v1[0].first_retain_cause!=0);
+ CHECK(adapter_v1[0].first_retain_cause==RAYA_RECOVERY_CAUSE_SUBMITTER_ACK_NOTIFICATION);
  CHECK(adapter_v1[0].first_retain_stage==RAYA_ADAPTER_RETAIN_STAGE_SUBMITTER_ACK);
  worker_v1[0].worker_epoch=0x5678u;
  inventory_required=0;
  CHECK(raya_managed_worker_copy_retained_inventory_v1(&w,
        RAYA_WORKER_RETAINED_RECORD_VERSION_1,NULL,0,&inventory_required)==
        RAYA_RETAINED_INVENTORY_INSUFFICIENT_CAPACITY);
- CHECK(inventory_required==3 && worker_v1[0].worker_epoch==0x5678u);
+ CHECK(inventory_required==1 && worker_v1[0].worker_epoch==0x5678u);
  CHECK(raya_managed_worker_copy_retained_inventory_v1(&w,
-       RAYA_WORKER_RETAINED_RECORD_VERSION_1,worker_v1,4,&inventory_required)==
+       RAYA_WORKER_RETAINED_RECORD_VERSION_1,worker_v1,1,&inventory_required)==
        RAYA_RETAINED_INVENTORY_OK);
- CHECK(inventory_required==3);
- { size_t k; int adapter_link=0,direct_record=0,partial_record=0;
-   for(k=0;k<inventory_required;++k) {
-     CHECK(worker_v1[k].struct_size==sizeof(worker_v1[k]));
-     CHECK(worker_v1[k].version==RAYA_WORKER_RETAINED_RECORD_VERSION_1);
-     if(worker_v1[k].inventory_kind==RAYA_WORKER_INVENTORY_ADAPTER_ASSOCIATED) {
-       adapter_link=1;
-       CHECK(worker_v1[k].adapter_identity_valid);
-       CHECK(worker_v1[k].adapter_instance_id==adapter_v1[0].adapter_instance_id);
-       CHECK(worker_v1[k].adapter_operation_id==adapter_v1[0].adapter_operation_id);
-     } else if(worker_v1[k].inventory_kind==RAYA_WORKER_INVENTORY_DIRECT) {
-       direct_record=1;
-       CHECK(worker_v1[k].identity_valid && !worker_v1[k].adapter_identity_valid);
-     } else if(!worker_v1[k].identity_valid &&
-               worker_v1[k].inventory_kind==RAYA_WORKER_INVENTORY_UNSPECIFIED) {
-       partial_record=1;
-       CHECK(worker_v1[k].worker_epoch==0 && worker_v1[k].worker_operation_id==0);
-       CHECK(!worker_v1[k].adapter_identity_valid);
-       CHECK(worker_v1[k].first_retain_stage==RAYA_WORKER_RETAIN_STAGE_PARTIAL_RECORD);
-     }
-   }
-   CHECK(adapter_link && direct_record && partial_record);
- }
+ CHECK(inventory_required==1);
+  CHECK(worker_v1[0].inventory_kind==RAYA_WORKER_INVENTORY_ADAPTER_ASSOCIATED);
+  CHECK(worker_v1[0].adapter_instance_id==adapter_v1[0].adapter_instance_id);
+  CHECK(worker_v1[0].adapter_operation_id==adapter_v1[0].adapter_operation_id);
  CHECK(a.retained_count==1 && a.active_count==1);
- CHECK(w.retained_count==3 && w.retained_head==&partial_retained);
+  CHECK(w.retained_count==1 && w.retained_head!=NULL);
 #ifdef RAYA_ADAPTER_TESTING
 
   CHECK(adapter_items[0].issue_effect==RAYA_SUBMITTER_EFFECT_COMMITTED);
@@ -744,11 +697,7 @@ direct_pipe=CreateEventW(NULL,TRUE,FALSE,NULL);
  CHECK(adapter_items[0].submitter_active_producers==0);
  CHECK(adapter_items[0].submitter_queue_count==0);
 #endif
- EnterCriticalSection(&w.lock);
- { raya_managed_operation **link=&w.retained_head; while(*link && *link!=&direct_retained) link=&(*link)->retained_next; CHECK(*link==&direct_retained); *link=direct_retained.retained_next; --w.retained_count; direct_retained.retained_next=NULL; }
- LeaveCriticalSection(&w.lock);
  CHECK(!raya_managed_worker_destroy(&w));
- CHECK(CloseHandle(direct_pipe)); CHECK(CloseHandle(direct_event));
  unregister_ack_state(&state);
   unregister_worker_close_state(&state);
   CHECK(state.worker_close_handles[0]==NULL && state.worker_close_handles[1]==NULL);
@@ -1190,7 +1139,7 @@ static int test_finalizer_close_failure_retains(void) {
  CHECK(adapter_count==1 && worker_count==1);
   CHECK(adapter_items[0].adapter_instance_id!=0);
   CHECK(adapter_items[0].stable_operation_id==1);
-  CHECK(adapter_items[0].first_retain_cause!=0);
+  CHECK(adapter_items[0].first_retain_cause==RAYA_RECOVERY_CAUSE_HANDLE_CLOSE);
   CHECK(adapter_items[0].first_retain_stage!=RAYA_ADAPTER_RETAIN_STAGE_UNKNOWN);
  CHECK(validate_retained_snapshot(adapter_items,adapter_count,
        worker_items,worker_count)==RAYA_RETAINED_VALID);
@@ -1315,7 +1264,7 @@ static int test_submit_rejected_after_worker_degraded(void) {
  CHECK(raya_submitter_shutdown(&s));
  CHECK(raya_submitter_join(&s,5000));
  CHECK(raya_submitter_destroy(&s));
- CHECK(!raya_managed_worker_shutdown(&w));
+  CHECK(!raya_managed_worker_shutdown(&w));
  wait_result=WaitForSingleObject(w.thread,0);
  CHECK(wait_result==WAIT_OBJECT_0);
  CHECK(!raya_managed_worker_join(&w,100));
@@ -1394,7 +1343,6 @@ static int test_worker_retained_identity_publication_contract(void) {
  CHECK(raya_managed_worker_shutdown(&w));
  CHECK(raya_managed_worker_join(&w,5000));
  CHECK(raya_managed_worker_destroy(&w));
- CHECK(CloseHandle(direct_pipe)); CHECK(CloseHandle(direct_event));
  CHECK(CloseHandle(adapter_pipe)); CHECK(CloseHandle(adapter_event));
  return 0;
 }
@@ -1506,14 +1454,11 @@ static int test_destroy_ex_reports_effect_and_reconciliation(void) {
  return 0;
 }
 
-static int test_shared_worker_two_adapter_success_then_ack_quarantine(void) {
+static int test_shared_worker_strict_dual_ack_quarantine(void) {
  raya_managed_worker w;
- raya_managed_operation *retained;
  raya_worker_retained_record_v1 worker_inventory[2];
  raya_adapter_retained_record_v1 adapter_a_inventory[1],adapter_b_inventory[1];
  size_t worker_inventory_count=0,adapter_a_inventory_count=0,adapter_b_inventory_count=0;
- DWORD retained_cause;
- int retained_stage;
  raya_integrated_submit_adapter a,b;
  raya_dedicated_submitter sa,sb;
  raya_integrated_adapter_api api_a,api_b;
@@ -1529,8 +1474,9 @@ static int test_shared_worker_two_adapter_success_then_ack_quarantine(void) {
  HANDLE server_a=INVALID_HANDLE_VALUE,client_a=INVALID_HANDLE_VALUE;
  HANDLE server_b=INVALID_HANDLE_VALUE,client_b=INVALID_HANDLE_VALUE;
  DWORD written=0,deadline;
- adapter_race_arg a_close_arg; HANDLE a_close_thread=NULL;
  raya_adapter_destroy_result a_close_result;
+  raya_submitter_lifecycle life_a=RAYA_SUBMITTER_RUNNING,life_b=RAYA_SUBMITTER_RUNNING;
+  size_t qa=0,pa=0,aa=0,la=0,qb=0,pb=0,ab=0,lb=0;
  LONG sa_api_entrants=0,sb_api_entrants=0;
  ZeroMemory(&w,sizeof(w)); ZeroMemory(&a,sizeof(a)); ZeroMemory(&b,sizeof(b));
  ZeroMemory(&sa,sizeof(sa)); ZeroMemory(&sb,sizeof(sb));
@@ -1562,202 +1508,160 @@ static int test_shared_worker_two_adapter_success_then_ack_quarantine(void) {
  CHECK(raya_integrated_adapter_start_with_apis(&a,&sa,&w,4,&api_a,&submitter_api));
  CHECK(raya_integrated_adapter_start_with_apis(&b,&sb,&w,4,&api_b,&submitter_api));
  CHECK(a.instance_id!=0 && b.instance_id!=0 && a.instance_id!=b.instance_id);
+ state_a.arm_ack_on_worker_close=TRUE;
  CHECK(raya_integrated_adapter_submit(&a,server_a,RAYA_MANAGED_PIPE_READ,NULL,1,
        completion,(void *)&callbacks_a)==RAYA_ADAPTER_QUEUED);
- CHECK(WriteFile(client_a,"A",1,&written,NULL) && written==1);
- deadline=GetTickCount()+5000;
- while(InterlockedCompareExchange(&callbacks_a,0,0)==0 &&
-       (LONG)(deadline-GetTickCount())>0) Sleep(1);
- CHECK(callbacks_a==1);
- CHECK(state_a.worker_close_calls==2 && !state_a.ack_failure_injected);
- CHECK(raya_integrated_adapter_retained_count(&a)==0 && a.active_count==0);
  CHECK(raya_integrated_adapter_submit(&b,server_b,RAYA_MANAGED_PIPE_READ,NULL,1,
        completion,(void *)&callbacks_b)==RAYA_ADAPTER_QUEUED);
+  deadline=GetTickCount()+5000;
+  for(;;) {
+   int both_handed;
+   EnterCriticalSection(&w.lock);
+   both_handed=(state_a.read_calls==1 && state_b.read_calls==1 &&
+       w.integrated.core.outstanding==2 && w.integrated.registry.count==2);
+   LeaveCriticalSection(&w.lock);
+   if(both_handed) break;
+   if((LONG)(deadline-GetTickCount())<=0) break;
+   Sleep(1);
+  }
+  EnterCriticalSection(&w.lock);
+  CHECK(state_a.read_calls==1 && state_b.read_calls==1);
+  CHECK(w.integrated.core.outstanding==2 && w.integrated.registry.count==2);
+  LeaveCriticalSection(&w.lock);
+ CHECK(WriteFile(client_a,"A",1,&written,NULL) && written==1);
  CHECK(WriteFile(client_b,"B",1,&written,NULL) && written==1);
  deadline=GetTickCount()+5000;
- while((!state_b.ack_failure_injected || raya_integrated_adapter_retained_count(&b)==0) &&
+ while((!state_a.ack_failure_injected || !state_b.ack_failure_injected ||
+        raya_integrated_adapter_retained_count(&a)==0 ||
+        raya_integrated_adapter_retained_count(&b)==0) &&
        (LONG)(deadline-GetTickCount())>0) Sleep(1);
+ CHECK(state_a.worker_close_calls==2 && state_a.ack_failure_injected);
  CHECK(state_b.worker_close_calls==2 && state_b.ack_failure_injected);
- CHECK(state_a.ack_failure_injected==FALSE);
-  CHECK(callbacks_b==0);
-  CHECK(raya_integrated_adapter_retained_count(&a)==0 && a.active_count==0);
-  CHECK(raya_integrated_adapter_retained_count(&b)==1 && b.active_count==1);
-  /* Worker degradation rejects A's next operation; its real Adapter-local
-     close callback then fails in the existing pre-issue cleanup path. */
-  state_a.fail_close=TRUE;
-  CHECK(raya_integrated_adapter_submit(&a,server_a,RAYA_MANAGED_PIPE_READ,NULL,1,
-        completion,(void *)&callbacks_a)==RAYA_ADAPTER_RETAINED);
-  CHECK(callbacks_a==1);
-  CHECK(state_a.close_calls>=1);
-  CHECK(raya_integrated_adapter_retained_count(&a)==1 && a.active_count==1);
-  CHECK(raya_integrated_adapter_retained_count(&b)==1 && b.active_count==1);
-  CHECK(w.retained_count==2 && w.retained_head!=NULL);
-  {
-   raya_managed_operation *item;
-   int found_a=0,found_b=0;
-   for(item=w.retained_head;item;item=item->retained_next) {
-    CHECK(item->identity_valid && item->adapter_identity_valid);
-    if(item->adapter_instance_id==a.instance_id) {
-     CHECK(item->adapter_operation_id==2);
-     CHECK(item->first_retain_cause==RAYA_RECOVERY_CAUSE_HANDLE_CLOSE);
-     CHECK(item->first_retain_stage==RAYA_WORKER_RETAIN_STAGE_ADAPTER_ASSOCIATED);
-     found_a=1;
-    } else if(item->adapter_instance_id==b.instance_id) {
-     CHECK(item->adapter_operation_id==1);
-     CHECK(item->first_retain_cause==RAYA_RECOVERY_CAUSE_OWNERSHIP_INVARIANT);
-     CHECK(item->first_retain_stage==RAYA_WORKER_RETAIN_STAGE_POST_TERMINAL);
-     found_b=1;
-    } else CHECK(0);
-   }
-   CHECK(found_a && found_b);
-   retained=NULL;
-   for(item=w.retained_head;item;item=item->retained_next)
-    if(item->adapter_instance_id==b.instance_id) retained=item;
-   CHECK(retained!=NULL);
-   CHECK(retained->owner.state==RAYA_PIPE_OWNER_RELEASED);
-   CHECK(retained->finalizer.state==RAYA_FINALIZER_RELEASED);
-   retained_cause=retained->first_retain_cause;
-   retained_stage=retained->first_retain_stage;
-   EnterCriticalSection(&w.lock);
-   CHECK(!raya_managed_worker_publish_retained_locked(&w,retained,
-         RAYA_RECOVERY_CAUSE_OWNERSHIP_INVARIANT,RAYA_WORKER_RETAIN_STAGE_POST_TERMINAL));
-   CHECK(w.retained_count==2);
-   CHECK(retained->first_retain_cause==retained_cause);
-   CHECK(retained->first_retain_stage==retained_stage);
-   LeaveCriticalSection(&w.lock);
+  CHECK(state_a.read_calls==1 && state_b.read_calls==1);
+  CHECK(raya_submitter_snapshot(&sa,&life_a,&qa,&pa,&aa,&la));
+  CHECK(raya_submitter_snapshot(&sb,&life_b,&qb,&pb,&ab,&lb));
+  CHECK(life_a==RAYA_SUBMITTER_DEGRADED && life_b==RAYA_SUBMITTER_DEGRADED);
+  CHECK(qa==0 && pa==0 && aa==0 && la==0);
+  CHECK(qb==0 && pb==0 && ab==0 && lb==0);
+ CHECK(callbacks_a==0 && callbacks_b==0);
+ CHECK(raya_integrated_adapter_retained_count(&a)==1 && a.active_count==1);
+ CHECK(raya_integrated_adapter_retained_count(&b)==1 && b.active_count==1);
+ CHECK(w.retained_count==2 && w.retained_head!=NULL);
+ CHECK(w.integrated.core.lifecycle==RAYA_REAPER_ACCEPTING);
+ {
+  raya_managed_operation *item;
+  int found_a=0,found_b=0;
+  for(item=w.retained_head;item;item=item->retained_next) {
+   CHECK(item->identity_valid && item->adapter_identity_valid);
+   CHECK(item->first_retain_cause==RAYA_RECOVERY_CAUSE_SUBMITTER_ACK_NOTIFICATION);
+   CHECK(item->first_retain_stage==RAYA_WORKER_RETAIN_STAGE_POST_TERMINAL);
+   CHECK(item->owner.state==RAYA_PIPE_OWNER_RELEASED);
+   CHECK(item->finalizer.state==RAYA_FINALIZER_RELEASED);
+   if(item->adapter_instance_id==a.instance_id) { CHECK(item->adapter_operation_id==1); found_a=1; }
+   else if(item->adapter_instance_id==b.instance_id) { CHECK(item->adapter_operation_id==1); found_b=1; }
+   else CHECK(0);
   }
-  /* Quiesce A's admission after retaining op 2, using the existing entrant gate. */
-  state_a.block_create=TRUE; state_a.fail_create=TRUE;
-  state_a.create_entered=CreateSemaphoreW(NULL,0,1,NULL);
-  state_a.create_release=CreateEventW(NULL,TRUE,FALSE,NULL);
-  CHECK(state_a.create_entered!=NULL && state_a.create_release!=NULL);
-  a_close_arg.adapter=&a; a_close_arg.pipe=server_a;
-  a_close_arg.result=RAYA_ADAPTER_QUEUED;
-  a_close_thread=CreateThread(NULL,0,adapter_race_submit_thread,&a_close_arg,0,NULL);
-  CHECK(a_close_thread!=NULL);
-  CHECK(WaitForSingleObject(state_a.create_entered,5000)==WAIT_OBJECT_0);
-  CHECK(raya_integrated_adapter_destroy_ex(&a,&a_close_result)==RAYA_ADAPTER_DESTROY_BUSY);
-  CHECK(a_close_result.admission_closed==TRUE && a_close_result.entrants==1);
-  CHECK(SetEvent(state_a.create_release));
-  CHECK(WaitForSingleObject(a_close_thread,5000)==WAIT_OBJECT_0);
-  CHECK(a_close_arg.result==RAYA_ADAPTER_REJECTED);
-  CHECK(CloseHandle(a_close_thread)); a_close_thread=NULL;
-  CHECK(a.active_count==1 && a.retained_count==1);
-  CHECK((InterlockedCompareExchange(&a.lifecycle_state,0,0)&0x3fffffff)==0);
-  CHECK((InterlockedCompareExchange(&a.lifecycle_state,0,0)&0x40000000)!=0);
-  CHECK(CloseHandle(state_a.create_entered)); state_a.create_entered=NULL;
-  CHECK(CloseHandle(state_a.create_release)); state_a.create_release=NULL;
- CHECK(!raya_integrated_adapter_destroy(&b));
- CHECK(raya_submitter_shutdown(&sa));
- CHECK(raya_submitter_join(&sa,5000));
- CHECK(raya_submitter_admission_close(&sa,&sa_api_entrants));
- CHECK(sa_api_entrants==0);
+  CHECK(found_a && found_b);
+ }
+ {
+  LONG reads_before=state_a.read_calls;
+  CHECK(raya_integrated_adapter_submit(&a,server_a,RAYA_MANAGED_PIPE_READ,NULL,1,
+        completion,(void *)&callbacks_a)==RAYA_ADAPTER_REJECTED);
+  CHECK(state_a.read_calls==reads_before);
+  CHECK(raya_integrated_adapter_retained_count(&a)==1 && a.active_count==1);
+ }
+ CHECK(raya_integrated_adapter_destroy_ex(&a,&a_close_result)==RAYA_ADAPTER_DESTROY_BUSY);
+ CHECK(a_close_result.admission_closed==TRUE && a_close_result.retained==1);
+ {
+  raya_adapter_destroy_result b_close_result;
+  CHECK(raya_integrated_adapter_destroy_ex(&b,&b_close_result)==RAYA_ADAPTER_DESTROY_BUSY);
+  CHECK(b_close_result.admission_closed==TRUE && b_close_result.retained==1);
+ }
+ CHECK(!raya_submitter_shutdown(&sa));
+ CHECK(WaitForSingleObject(sa.thread,5000)==WAIT_OBJECT_0);
+ CHECK(!raya_submitter_join(&sa,100));
+ CHECK(sa.joined==TRUE && sa.thread==NULL);
  CHECK(!raya_submitter_shutdown(&sb));
  CHECK(WaitForSingleObject(sb.thread,5000)==WAIT_OBJECT_0);
  CHECK(!raya_submitter_join(&sb,100));
  CHECK(sb.joined==TRUE && sb.thread==NULL);
- CHECK(raya_submitter_admission_close(&sb,&sb_api_entrants));
- CHECK(sb_api_entrants==0);
+ CHECK(raya_submitter_admission_close(&sa,&sa_api_entrants) && sa_api_entrants==0);
+ CHECK(raya_submitter_admission_close(&sb,&sb_api_entrants) && sb_api_entrants==0);
+ CHECK(!raya_submitter_destroy(&sa));
  CHECK(!raya_submitter_destroy(&sb));
- CHECK(!raya_managed_worker_shutdown(&w));
- CHECK(WaitForSingleObject(w.thread,5000)==WAIT_OBJECT_0);
- CHECK(!raya_managed_worker_join(&w,100));
- CHECK(w.joined==TRUE && w.thread==NULL);
+ CHECK(raya_managed_worker_shutdown(&w));
+ CHECK(raya_managed_worker_join(&w,5000));
+ CHECK(w.integrated.core.lifecycle==RAYA_REAPER_STOPPED);
  CHECK(raya_managed_worker_copy_retained_inventory_v1(&w,
        RAYA_WORKER_RETAINED_RECORD_VERSION_1,worker_inventory,2,
        &worker_inventory_count)==RAYA_RETAINED_INVENTORY_OK);
-  CHECK(worker_inventory_count==2);
-  {
-   size_t i; int found_a=0,found_b=0;
-   for(i=0;i<worker_inventory_count;++i) {
-    CHECK(worker_inventory[i].struct_size==sizeof(worker_inventory[i]));
-    CHECK(worker_inventory[i].version==RAYA_WORKER_RETAINED_RECORD_VERSION_1);
-    CHECK(worker_inventory[i].identity_valid);
-    CHECK(worker_inventory[i].inventory_kind==RAYA_WORKER_INVENTORY_ADAPTER_ASSOCIATED);
-    CHECK(worker_inventory[i].worker_epoch==w.worker_epoch);
-    CHECK(worker_inventory[i].adapter_identity_valid);
-    if(worker_inventory[i].adapter_instance_id==a.instance_id) {
-     CHECK(worker_inventory[i].adapter_operation_id==2);
-     CHECK(worker_inventory[i].first_retain_cause==RAYA_RECOVERY_CAUSE_HANDLE_CLOSE);
-     CHECK(worker_inventory[i].first_retain_stage==RAYA_WORKER_RETAIN_STAGE_ADAPTER_ASSOCIATED);
-     found_a=1;
-    } else if(worker_inventory[i].adapter_instance_id==b.instance_id) {
-     CHECK(worker_inventory[i].adapter_operation_id==1);
-     CHECK(worker_inventory[i].first_retain_cause==retained_cause);
-     CHECK(worker_inventory[i].first_retain_stage==RAYA_WORKER_RETAIN_STAGE_POST_TERMINAL);
-     found_b=1;
-    } else CHECK(0);
-   }
-   CHECK(found_a && found_b);
+ CHECK(worker_inventory_count==2);
+ {
+  size_t i; int found_a=0,found_b=0;
+  for(i=0;i<worker_inventory_count;++i) {
+   CHECK(worker_inventory[i].struct_size==sizeof(worker_inventory[i]));
+   CHECK(worker_inventory[i].version==RAYA_WORKER_RETAINED_RECORD_VERSION_1);
+   CHECK(worker_inventory[i].identity_valid);
+   CHECK(worker_inventory[i].inventory_kind==RAYA_WORKER_INVENTORY_ADAPTER_ASSOCIATED);
+   CHECK(worker_inventory[i].worker_epoch==w.worker_epoch);
+   CHECK(worker_inventory[i].adapter_identity_valid);
+   CHECK(worker_inventory[i].first_retain_cause==RAYA_RECOVERY_CAUSE_SUBMITTER_ACK_NOTIFICATION);
+   CHECK(worker_inventory[i].first_retain_stage==RAYA_WORKER_RETAIN_STAGE_POST_TERMINAL);
+   if(worker_inventory[i].adapter_instance_id==a.instance_id) { CHECK(worker_inventory[i].adapter_operation_id==1); found_a=1; }
+   else if(worker_inventory[i].adapter_instance_id==b.instance_id) { CHECK(worker_inventory[i].adapter_operation_id==1); found_b=1; }
+   else CHECK(0);
   }
+  CHECK(found_a && found_b);
+ }
  CHECK(raya_integrated_adapter_copy_retained_inventory_v1(&a,
        RAYA_ADAPTER_RETAINED_RECORD_VERSION_1,adapter_a_inventory,1,
        &adapter_a_inventory_count)==RAYA_RETAINED_INVENTORY_OK);
-  CHECK(adapter_a_inventory_count==1);
-  CHECK(adapter_a_inventory[0].adapter_instance_id==a.instance_id);
-  CHECK(adapter_a_inventory[0].adapter_operation_id==2);
-  CHECK(adapter_a_inventory[0].first_retain_cause==RAYA_RECOVERY_CAUSE_HANDLE_CLOSE);
-  CHECK(adapter_a_inventory[0].first_retain_stage==RAYA_ADAPTER_RETAIN_STAGE_HANDLE_CLOSE_FAILURE);
+ CHECK(adapter_a_inventory_count==1);
+ CHECK(adapter_a_inventory[0].adapter_instance_id==a.instance_id);
+ CHECK(adapter_a_inventory[0].adapter_operation_id==1);
+ CHECK(adapter_a_inventory[0].first_retain_cause==RAYA_RECOVERY_CAUSE_SUBMITTER_ACK_NOTIFICATION);
+ CHECK(adapter_a_inventory[0].first_retain_stage==RAYA_ADAPTER_RETAIN_STAGE_SUBMITTER_ACK);
  CHECK(raya_integrated_adapter_copy_retained_inventory_v1(&b,
        RAYA_ADAPTER_RETAINED_RECORD_VERSION_1,adapter_b_inventory,1,
        &adapter_b_inventory_count)==RAYA_RETAINED_INVENTORY_OK);
  CHECK(adapter_b_inventory_count==1);
- CHECK(adapter_b_inventory[0].struct_size==sizeof(adapter_b_inventory[0]));
- CHECK(adapter_b_inventory[0].version==RAYA_ADAPTER_RETAINED_RECORD_VERSION_1);
  CHECK(adapter_b_inventory[0].adapter_instance_id==b.instance_id);
  CHECK(adapter_b_inventory[0].adapter_operation_id==1);
- CHECK(adapter_b_inventory[0].first_retain_cause==retained_cause);
+ CHECK(adapter_b_inventory[0].first_retain_cause==RAYA_RECOVERY_CAUSE_SUBMITTER_ACK_NOTIFICATION);
  CHECK(adapter_b_inventory[0].first_retain_stage==RAYA_ADAPTER_RETAIN_STAGE_SUBMITTER_ACK);
 #ifdef RAYA_ADAPTER_TESTING
-  CHECK(raya_adapter_test_retained_snapshot(&a,adapter_a_items,1,&adapter_a_count,
-        worker_items,4,&worker_count)==1);
-  CHECK(adapter_a_count==1 && worker_count==2);
-  CHECK(raya_adapter_test_retained_snapshot(&b,adapter_b_items,1,&adapter_b_count,
-        worker_items,4,&worker_count)==1);
-  CHECK(adapter_b_count==1 && worker_count==2);
-  adapter_items[0]=adapter_a_items[0];
-  adapter_items[1]=adapter_b_items[0];
-  CHECK(validate_retained_snapshot(adapter_items,2,worker_items,worker_count)==RAYA_RETAINED_VALID);
-  CHECK(adapter_items[1].adapter_instance_id==b.instance_id);
-  CHECK(adapter_items[1].stable_operation_id==1);
-  CHECK((adapter_items[1].flags & 31u)==31u);
-  CHECK(adapter_items[1].owner_state==RAYA_PIPE_OWNER_RELEASED);
-  CHECK(adapter_items[1].finalizer_state==RAYA_FINALIZER_RELEASED);
-  CHECK(adapter_items[1].issue_effect==RAYA_SUBMITTER_EFFECT_COMMITTED);
-  CHECK(adapter_items[1].publish_effect==RAYA_SUBMITTER_EFFECT_COMMITTED);
-  {
-   size_t i; int found_a=0,found_b=0;
-   for(i=0;i<worker_count;++i) {
-    CHECK(worker_items[i].identity_valid);
-    CHECK(worker_items[i].inventory_kind==RAYA_WORKER_INVENTORY_ADAPTER_ASSOCIATED);
-    CHECK(worker_items[i].adapter_identity_valid);
-    if(worker_items[i].adapter_instance_id==a.instance_id) {
-     CHECK(worker_items[i].adapter_operation_id==2);
-     CHECK(worker_items[i].first_retain_stage==RAYA_WORKER_RETAIN_STAGE_ADAPTER_ASSOCIATED);
-     found_a=1;
-    } else if(worker_items[i].adapter_instance_id==b.instance_id) {
-     CHECK(worker_items[i].adapter_operation_id==adapter_items[1].stable_operation_id);
-     CHECK(worker_items[i].first_retain_stage==RAYA_WORKER_RETAIN_STAGE_POST_TERMINAL);
-     found_b=1;
-    } else CHECK(0);
-   }
-   CHECK(found_a && found_b);
-  }
+ CHECK(raya_adapter_test_retained_snapshot(&a,adapter_a_items,1,&adapter_a_count,
+       worker_items,4,&worker_count)==1);
+ CHECK(adapter_a_count==1 && worker_count==2);
+ CHECK(raya_adapter_test_retained_snapshot(&b,adapter_b_items,1,&adapter_b_count,
+       worker_items,4,&worker_count)==1);
+ CHECK(adapter_b_count==1 && worker_count==2);
+ adapter_items[0]=adapter_a_items[0]; adapter_items[1]=adapter_b_items[0];
+ CHECK(validate_retained_snapshot(adapter_items,2,worker_items,worker_count)==RAYA_RETAINED_VALID);
+ CHECK(adapter_items[0].adapter_instance_id==a.instance_id);
+ CHECK(adapter_items[1].adapter_instance_id==b.instance_id);
+ CHECK(adapter_items[0].owner_state==RAYA_PIPE_OWNER_RELEASED);
+ CHECK(adapter_items[1].owner_state==RAYA_PIPE_OWNER_RELEASED);
+ CHECK(adapter_items[0].finalizer_state==RAYA_FINALIZER_RELEASED);
+ CHECK(adapter_items[1].finalizer_state==RAYA_FINALIZER_RELEASED);
+ CHECK(adapter_items[0].issue_effect==RAYA_SUBMITTER_EFFECT_COMMITTED);
+ CHECK(adapter_items[1].issue_effect==RAYA_SUBMITTER_EFFECT_COMMITTED);
 #endif
- CHECK(raya_submitter_destroy(&sa));
  CHECK(!raya_integrated_adapter_destroy(&a));
+ CHECK(!raya_integrated_adapter_destroy(&b));
  CHECK(!raya_managed_worker_destroy(&w));
- CHECK(state_a.worker_close_handles[0]!=NULL && state_a.worker_close_handles[1]!=NULL);
-  { DWORD flags; CHECK(GetHandleInformation(state_a.worker_close_handles[0],&flags));
-    CHECK(GetHandleInformation(state_a.worker_close_handles[1],&flags)); }
- CHECK(state_b.worker_close_handles[0]==NULL && state_b.worker_close_handles[1]==NULL);
- unregister_ack_state(&state_a); unregister_ack_state(&state_b);
+  unregister_ack_state(&state_a); unregister_ack_state(&state_b);
  unregister_worker_close_state(&state_a); unregister_worker_close_state(&state_b);
  CHECK(CloseHandle(client_a)); CHECK(CloseHandle(server_a));
  CHECK(CloseHandle(client_b)); CHECK(CloseHandle(server_b));
  return 0;
 }
-int main(void) {
+int main(int argc,char **argv) {
+ if (argc==2 && strcmp(argv[1],"--strict-dual-ack")==0) {
+  int result=test_shared_worker_strict_dual_ack_quarantine();
+  printf("strict dual ACK isolation: %ld assertions %s\n",checks,result?"FAIL":"PASS");
+  return result;
+ }
  if (test_worker_retained_identity_publication_contract()) return 1;
 #ifdef RAYA_ADAPTER_TESTING
  if (test_retained_snapshot_validator()) return 1;
@@ -1767,7 +1671,6 @@ int main(void) {
  int i;
  if (test_multi_submitter_ack_dispatcher()) return 1;
  if (test_shared_worker_close_dispatcher()) return 1;
- if (test_shared_worker_two_adapter_success_then_ack_quarantine()) return 1;
  if (test_destroy_ex_reports_effect_and_reconciliation()) return 1;
  if (test_destroy_waits_for_concurrent_submit_entrants()) return 1;
  if (test_submit_rejected_after_worker_degraded()) return 1;

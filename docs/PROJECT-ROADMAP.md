@@ -1,6 +1,6 @@
 # Project Roadmap — Raya Local MCP Bridge
 
-Last updated: 2026-11-05
+Last updated: 2026-11-20
 Authority: this file is the phase sequence; CURRENT-STATUS.md is the live snapshot; HANDOFF.md is the chronological transfer record.
 
 ## Mission
@@ -47,6 +47,15 @@ Deliver a reliable, secure, useful Windows local MCP bridge with practical Deskt
 
 ## Current focus
 Phase 1. The isolated native prototype now has a tested held-parent child read and zero-byte exclusive create. The create harness synchronizes eight independent processes against one leaf and verifies exactly one winner/seven collisions; 30 repeated create/collision pairs return HANDLE count to baseline; Unicode BMP/supplementary filenames are accepted while ADS-colon/`::$DATA`/named-stream/control-character names are rejected. An ASCII case-only collision is atomic; composed and decomposed acute-accent names were distinct on this test volume. A post-create close-status fault is surfaced and counted, but the file remains committed, explicitly documenting the ambiguous outcome. The test harness uses filesystem ready/go/report barriers and explicit GC for stable process-handle accounting. Native MSVC x64 build/harness passed; npm_lint and npm_test passed (42 core, 34 format/config, HTTP auth/initialize, 36 URL-security). The acceptance addon was built under a separate filename because an earlier timed-out harness retained a lock on the previous artifact; the locked file and uncertain fixtures were preserved. Child FILE_ID_INFO and volume serial readback now pass through the held parent HANDLE, with regular-file/type checks, stable repeated identity, same-volume comparison, nonzero file ID, and missing/traversal/ADS rejection. The handle-derived 128-bit file ID low 64 bits now match Node's independent bigint `stat.ino` readback on the test volume. Latest continuation re-verification (2026-10-30): npm_lint/npm_test exited 0 (42 core, 34 format/config, HTTP auth 401/200, 36 URL-security). MSVC x64 native build/harness exited 0 with `ok: true` and 27 outcome groups. A deliberate injected assertion failure after descendant-worker synchronization exited 1 as expected; the harness `finally` path returned the original assertion error without a cleanup AggregateError, then a clean native build/harness rerun passed. This covers that one assertion-failure cleanup schedule only. Remaining gates: synchronized held-parent FILE_CREATE tests now pass for parent-path replacement, injected post-open worker failure, regular-file leaf insertion/collision, and leaf-junction insertion/collision; all worker-local HANDLE counts return to baseline and fixtures are cleaned. Still required: safe directory-handle/descendant traversal and enumeration, production-equivalent list/search and metadata semantics, then write/edit and move/rename race coverage plus per-family cleanup/fault schedules. Production handlers remain path-based and unchanged; production confinement remains NOT ACCEPTED as race-free. No production integration.
+
+## Broker prototype v2 validation subtrack - 2026-11-20
+This is a separate prototype validation track and does not change the top-level Phase 1 filesystem-confinement gate or relabel the top-level roadmap's Phase 5 (MCP management/observability).
+
+- Broker Stage 5.16: COMPLETE for the unchanged strict dual-post-terminal-ACK criterion. Two independently OS-issued Adapter operations each reached their own post-terminal ACK-notification failure on the same shared Worker. The implementation uses typed Submitter ACK results and Adapter-scoped post-terminal retention; all other ACK/Worker failures remain fail-closed.
+- Broker Stage 5.19: COMPLETE within the frozen v1 independent per-plane copied-inventory contract; two Worker v1 records and one Adapter v1 record per Adapter were verified with matching identity pairs. No atomic cross-plane snapshot is implied.
+- Broker Stage 5.18: PARTIAL; deterministic reserve-rejection and invariant-guard evidence gaps remain. Broker Stage 5.20: INCOMPLETE; no positive recovery/reconciliation action is approved.
+- Broker Gate D: COMPLETE / NO ACTION APPROVED. Gate E: BLOCKED. Gate F: pending full Stage 5/Phase 1 owner acceptance and PR review. Broker Stage 5/Phase 1 remain NOT ACCEPTED; Production remains NO-GO.
+- Detailed acceptance evidence: `broker-prototype-v2-20261106/validation/STAGE-5-16-TO-5-20-EXECUTION-RESULTS-20261118.md`. This subtrack does not authorize Production wiring or recovery/retry/replay.
 
 ## Document responsibilities
 - `CURRENT-STATUS.md`: concise authoritative snapshot, active phase, recent checks, blockers, next action.

@@ -8,7 +8,9 @@ typedef enum {
  RAYA_RECOVERY_CAUSE_COMPLETION_UNCERTAIN=1u<<2,
  RAYA_RECOVERY_CAUSE_OWNERSHIP_INVARIANT=1u<<3,
  RAYA_RECOVERY_CAUSE_HANDLE_CLOSE=1u<<4,
- RAYA_RECOVERY_CAUSE_WAITSET_INVALID=1u<<5
+ RAYA_RECOVERY_CAUSE_WAITSET_INVALID=1u<<5,
+ /* Retained-record diagnostic only; never a Worker degradation cause. */
+ RAYA_RECOVERY_CAUSE_SUBMITTER_ACK_NOTIFICATION=1u<<6
 } raya_recovery_cause;
 typedef enum { RAYA_RECOVERY_BLOCKED=0, RAYA_RECOVERY_POLLING_ELIGIBLE=1 } raya_recovery_decision;
 raya_recovery_decision raya_recovery_policy_evaluate(uint32_t causes);

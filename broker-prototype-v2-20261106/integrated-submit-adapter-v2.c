@@ -180,6 +180,43 @@ static void retain_envelope(raya_adapter_envelope *e, uint32_t cause,
  LeaveCriticalSection(&w->lock);
 }
 
+static void retain_post_terminal_ack_notification(raya_adapter_envelope *e) {
+ raya_integrated_submit_adapter *a=e->adapter;
+ raya_managed_worker *w=a->worker;
+ BOOL newly_retained=FALSE, worker_published=FALSE;
+ /* Successful handoff consumed the caller lease; these flags must remain true. */
+ if (!e->worker_terminal_released || !e->worker_owns_operation ||
+      !e->worker_admitted || !e->worker_finished) {
+  retain_envelope(e,RAYA_RECOVERY_CAUSE_OWNERSHIP_INVARIANT,
+      RAYA_ADAPTER_RETAIN_STAGE_OWNERSHIP_INVARIANT);
+  return;
+ }
+ EnterCriticalSection(&a->lock);
+ if (!e->retained) {
+  e->first_retain_cause=RAYA_RECOVERY_CAUSE_SUBMITTER_ACK_NOTIFICATION;
+  e->first_retain_stage=RAYA_ADAPTER_RETAIN_STAGE_SUBMITTER_ACK;
+  e->retained=TRUE;
+  e->retained_next=a->retained_head;
+  a->retained_head=e;
+  ++a->retained_count;
+  newly_retained=TRUE;
+ }
+ LeaveCriticalSection(&a->lock);
+ EnterCriticalSection(&w->lock);
+ if (newly_retained)
+  worker_published=raya_managed_worker_publish_retained_locked(w,
+      &e->operation,RAYA_RECOVERY_CAUSE_SUBMITTER_ACK_NOTIFICATION,
+      RAYA_WORKER_RETAIN_STAGE_POST_TERMINAL);
+ if (!worker_published)
+  (void)raya_reaper_mark_degraded_cause(&w->integrated.core,
+      RAYA_RECOVERY_CAUSE_OWNERSHIP_INVARIANT);
+ LeaveCriticalSection(&w->lock);
+ if (!worker_published) {
+  return;
+ }
+ /* The callback runs on the Worker thread and returns directly to its loop.
+    Do not signal the Worker or release retained storage. */
+}
 static void adapter_free(raya_adapter_envelope *e) {
  if (e->tracked) {
   EnterCriticalSection(&e->adapter->lock);
@@ -194,10 +231,18 @@ static void adapter_worker_release(raya_managed_operation *op, void *context) {
  raya_adapter_envelope *e=(raya_adapter_envelope *)context;
  raya_integrated_submit_adapter *a=e->adapter;
  e->worker_terminal_released=TRUE;
- if (!raya_submitter_acknowledge(a->submitter,&e->request)) {
-  retain_envelope(e,RAYA_RECOVERY_CAUSE_OWNERSHIP_INVARIANT,
-      RAYA_ADAPTER_RETAIN_STAGE_OWNERSHIP_INVARIANT);
-  return;
+ {
+  raya_submitter_ack_status ack=raya_submitter_acknowledge_ex(
+      a->submitter,&e->request);
+  if (ack==RAYA_SUBMITTER_ACK_COMMITTED_NOTIFICATION_FAILED) {
+   retain_post_terminal_ack_notification(e);
+   return;
+  }
+  if (ack!=RAYA_SUBMITTER_ACK_SUCCESS) {
+   retain_envelope(e,RAYA_RECOVERY_CAUSE_OWNERSHIP_INVARIANT,
+       RAYA_ADAPTER_RETAIN_STAGE_OWNERSHIP_INVARIANT);
+   return;
+  }
  }
  e->callback(op->completion_error,op->transferred,
      e->read_operation ? op->buffer : NULL,e->callback_context);

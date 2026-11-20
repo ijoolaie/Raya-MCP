@@ -323,36 +323,36 @@ static int submitter_abort_unchecked(raya_dedicated_submitter *s,
  }
  LeaveCriticalSection(&s->lock); return ok;
 }
-static int submitter_acknowledge_unchecked(raya_dedicated_submitter *s,
+static raya_submitter_ack_status submitter_acknowledge_unchecked(raya_dedicated_submitter *s,
  raya_submitter_request *r) {
- if (s==NULL || r==NULL || !s->initialized) return 0;
+ if (s==NULL || r==NULL || !s->initialized) return RAYA_SUBMITTER_ACK_INVALID_ARGUMENT;
  for (;;) {
   EnterCriticalSection(&s->lock);
   if (r->state==RAYA_SUBMITTER_REQ_ISSUED) {
    if (s->issuer_leases==0) {
     degrade_request_locked(s,RAYA_SUBMITTER_DEGRADED_REASON_ACK_INVARIANT,ERROR_INVALID_DATA,r);
-    LeaveCriticalSection(&s->lock); return 0;
+    LeaveCriticalSection(&s->lock); return RAYA_SUBMITTER_ACK_NOT_COMMITTED_FAILURE;
    }
    --s->issuer_leases; r->state=RAYA_SUBMITTER_REQ_ACKED;
    if (!s->api.set_event(s->changed_event)) {
     DWORD error=GetLastError();
     degrade_request_locked(s,RAYA_SUBMITTER_DEGRADED_REASON_NOTIFICATION,error,r);
-    LeaveCriticalSection(&s->lock); return 0;
+    LeaveCriticalSection(&s->lock); return RAYA_SUBMITTER_ACK_COMMITTED_NOTIFICATION_FAILED;
    }
    if (!s->api.set_event(s->wake_event)) {
     DWORD error=GetLastError();
     degrade_request_locked(s,RAYA_SUBMITTER_DEGRADED_REASON_NOTIFICATION,error,r);
-    LeaveCriticalSection(&s->lock); return 0;
+    LeaveCriticalSection(&s->lock); return RAYA_SUBMITTER_ACK_COMMITTED_NOTIFICATION_FAILED;
    }
-   LeaveCriticalSection(&s->lock); return 1;
+   LeaveCriticalSection(&s->lock); return RAYA_SUBMITTER_ACK_SUCCESS;
   }
   if (r->state!=RAYA_SUBMITTER_REQ_ISSUING) {
-   LeaveCriticalSection(&s->lock); return 0;
+   LeaveCriticalSection(&s->lock); return RAYA_SUBMITTER_ACK_NOT_COMMITTED_FAILURE;
   }
   if (!s->api.reset_event(s->changed_event)) {
    DWORD error=GetLastError();
    degrade_request_locked(s,RAYA_SUBMITTER_DEGRADED_REASON_CHANGED_RESET,error,r);
-   LeaveCriticalSection(&s->lock); return 0;
+   LeaveCriticalSection(&s->lock); return RAYA_SUBMITTER_ACK_NOT_COMMITTED_FAILURE;
   }
   if (r->state!=RAYA_SUBMITTER_REQ_ISSUING) {
    LeaveCriticalSection(&s->lock); continue;
@@ -362,7 +362,7 @@ static int submitter_acknowledge_unchecked(raya_dedicated_submitter *s,
    DWORD error=GetLastError();
    EnterCriticalSection(&s->lock);
    degrade_request_locked(s,RAYA_SUBMITTER_DEGRADED_REASON_CHANGED_WAIT,error,r);
-   LeaveCriticalSection(&s->lock); return 0;
+   LeaveCriticalSection(&s->lock); return RAYA_SUBMITTER_ACK_NOT_COMMITTED_FAILURE;
   }
  }
 }
@@ -581,13 +581,18 @@ int raya_submitter_abort_admission(raya_dedicated_submitter *s,
  submitter_api_leave(s);
  return result;
 }
-int raya_submitter_acknowledge(raya_dedicated_submitter *s,
+raya_submitter_ack_status raya_submitter_acknowledge_ex(raya_dedicated_submitter *s,
  raya_submitter_request *r) {
- int result;
- if (!submitter_api_enter(s)) return 0;
+ raya_submitter_ack_status result;
+ if (s==NULL || r==NULL) return RAYA_SUBMITTER_ACK_INVALID_ARGUMENT;
+ if (!submitter_api_enter(s)) return RAYA_SUBMITTER_ACK_API_GATE_CLOSED;
  result=submitter_acknowledge_unchecked(s,r);
  submitter_api_leave(s);
  return result;
+}
+int raya_submitter_acknowledge(raya_dedicated_submitter *s,
+ raya_submitter_request *r) {
+ return raya_submitter_acknowledge_ex(s,r)==RAYA_SUBMITTER_ACK_SUCCESS;
 }
 int raya_submitter_snapshot(raya_dedicated_submitter *s,
  raya_submitter_lifecycle *life, size_t *queued, size_t *producers,
