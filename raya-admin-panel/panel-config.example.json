@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "allowedRoots": [
+    "C:\\path\\to\\Raya-local-MCP"
+  ],
+  "powershellEnabled": false
+}
