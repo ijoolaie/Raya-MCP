@@ -72,3 +72,11 @@ Tunnel Client is a separately distributed external dependency. Keep only a versi
 ## Completion status
 
 This record documents the classification and safe publishing rules. It does not claim that local files have been moved, deleted, uploaded or accepted for release. The local working tree remains untouched. The branch containing this curation record is a review branch and is not merged to `main`.
+
+## Targeted findings from panel review
+
+- `raya-admin-panel/README.md` currently contains absolute user-specific paths and historical root names. Do not upload it unchanged; rewrite it with generic examples.
+- The same README describes a memory-only panel token, while the inspected desktop launcher writes a restricted-access plaintext `panel-token.txt` for local URL reuse. Documentation and implementation must be reconciled before publication.
+- `start-mcp-stdio-panel.cmd`, `start-raya-admin-panel.ps1`, `start-raya-hidden.ps1` and `start-raya-hidden.vbs` contain machine-specific absolute paths. Convert them to paths derived from the script/repository location before publishing.
+- `raya-admin-panel/stdio-launcher.mjs` is first-party connectivity source and contains no literal credential in the inspected content, but it requires a local `panel-config.json`; publish only a sanitized schema/example, never the active config.
+- The local panel source files have not yet been copied into this branch. This is deliberate: panel server/UI code still needs a focused secret/path review and the token-storage documentation discrepancy must be resolved.
