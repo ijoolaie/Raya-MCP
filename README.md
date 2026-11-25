@@ -10,7 +10,7 @@ Raya Local MCP is one integrated product organized into three cooperating module
 2. **Local MCP server** — Windows-local filesystem, search, process/session, Office/PDF and URL capabilities.
 3. **Bridge & connectivity** — validated launchers, local admin panel and integration with the external Tunnel Client.
 
-The Tunnel Client is a separately distributed dependency; its binaries and source are not vendored here. The Admin Panel and launcher are first-party Raya components and are being brought under the repository's source and release review.
+The Tunnel Client is a separately distributed dependency; its binaries and source are not vendored here. The first-party Admin Panel and launcher sources are included in the repository-curation draft branch and remain subject to integration review.
 
 Architecture: [Project architecture](docs/architecture/PROJECT-ARCHITECTURE.md)  
 Repository boundaries and publishing rules: [Repository curation](docs/operations/REPOSITORY-CURATION.md)
