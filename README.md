@@ -2,6 +2,19 @@
 
 Windows-first MCP server for local development workspaces, exposed through stdio and an optional authenticated Streamable HTTP endpoint.
 
+## Project architecture
+
+Raya Local MCP is one integrated product organized into three cooperating modules:
+
+1. **MCP protocol integration** — MCP SDK integration, tool registration, STDIO and optional authenticated Streamable HTTP transports.
+2. **Local MCP server** — Windows-local filesystem, search, process/session, Office/PDF and URL capabilities.
+3. **Bridge & connectivity** — validated launchers, local admin panel and integration with the external Tunnel Client.
+
+The Tunnel Client is a separately distributed dependency; its binaries and source are not vendored here. The Admin Panel and launcher are first-party Raya components and are being brought under the repository's source and release review.
+
+Architecture: [Project architecture](docs/architecture/PROJECT-ARCHITECTURE.md)  
+Repository boundaries and publishing rules: [Repository curation](docs/operations/REPOSITORY-CURATION.md)
+
 ## Current implementation status (2026-11-01)
 - Core process/session, filesystem, search, configuration, diagnostics, URL retrieval, and PDF/DOCX/XLSX tools are implemented.
 - GitHub repository: https://github.com/ijoolaie/Raya-MCP (Private), default branch `main`; local source was first committed and pushed on 2026-11-01. Preserve any uncommitted local changes.
