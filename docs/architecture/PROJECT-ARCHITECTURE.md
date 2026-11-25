@@ -34,7 +34,7 @@ Owns local startup, client connectivity and operational management:
 - Local Raya Admin Panel for status, configuration and Tunnel Client lifecycle.
 - Tunnel profile integration and health/diagnostic visibility.
 
-The local Admin Panel and launcher sources currently exist in the working directory under `raya-admin-panel/`; they must be reviewed and added as first-party source. Runtime configuration files and user-specific root lists are not source and must not be committed.
+The first-party Admin Panel and validated launcher sources are included in the repository-curation draft branch under `raya-admin-panel/`. Runtime configuration files and user-specific root lists are not source and must not be committed.
 
 ## External dependency boundary
 
