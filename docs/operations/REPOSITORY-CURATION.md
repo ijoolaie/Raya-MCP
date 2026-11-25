@@ -2,7 +2,7 @@
 
 **Snapshot:** 2026-11-26  
 **Repository:** `ijoolaie/Raya-MCP` (private)  
-**Local source inspected:** `C:\Users\Ali\local-mcp-bridge`  
+**Local source inspected:** `local-mcp-bridge`  
 **Mode:** Inventory and classification; no local files deleted or moved.
 
 ## Repository identity
