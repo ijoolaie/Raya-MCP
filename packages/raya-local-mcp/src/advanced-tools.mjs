@@ -172,12 +172,12 @@ export function registerAdvancedTools(server,{ROOTS}){
    fields.push(value);return fields;
   };
   const processes=[];
-  for(const line of output.split(/\\r?\\n/)){
+  for(const line of output.split(/\r?\n/)){
    if(!line.trim())continue;
    const fields=parseCsvRow(line),pid=Number(fields[1]);
    if(!Number.isSafeInteger(pid)||pid<1)continue;
    const memory=Number(String(fields[4]||"").replace(/[^0-9]/g,""));
-   processes.push({pid,name:String(fields[0]||"").replace(/\\.exe$/i,""),cpuSeconds:null,workingSetBytes:Number.isFinite(memory)?memory*1024:null});
+   processes.push({pid,name:String(fields[0]||"").replace(/\.exe$/i,""),cpuSeconds:null,workingSetBytes:Number.isFinite(memory)?memory*1024:null});
    if(processes.length>=1000)break;
   }
   return result({count:processes.length,processes});
