@@ -1,0 +1,35 @@
+{
+    "name":  "@ijoolaie/stack",
+    "version":  "0.1.0",
+    "description":  "Integrated Raya MCP distribution and component compatibility manifest.",
+    "type":  "module",
+    "exports":  {
+                    ".":  "./src/index.mjs",
+                    "./manifest":  "./stack-manifest.json"
+                },
+    "files":  [
+                  "src",
+                  "stack-manifest.json",
+                  "README.md"
+              ],
+    "engines":  {
+                    "node":  "\u003e=20"
+                },
+    "scripts":  {
+                    "check":  "node --check src/index.mjs \u0026\u0026 node --check test/stack-manifest.test.mjs",
+                    "test":  "node --test"
+                },
+    "dependencies":  {
+                         "@ijoolaie/mcp-core":  "0.1.0",
+                         "@ijoolaie/local-mcp":  "0.1.0",
+                         "@ijoolaie/bridge":  "0.1.0"
+                     },
+    "publishConfig":  {
+                          "registry":  "https://npm.pkg.github.com"
+                      },
+    "repository":  {
+                       "type":  "git",
+                       "url":  "https://github.com/ijoolaie/Raya-MCP.git",
+                       "directory":  "packages/raya-stack"
+                   }
+}
