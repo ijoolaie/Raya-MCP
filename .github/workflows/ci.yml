@@ -13,7 +13,7 @@ jobs:
   windows-node22:
     name: Windows / Node.js 22
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       MCP_ALLOWED_ROOTS: ${{ github.workspace }}
     steps:
@@ -34,6 +34,9 @@ jobs:
 
       - name: Syntax checks
         run: npm run lint
+
+      - name: Verify modular package boundaries and clean-install profiles
+        run: npm run verify:modular
 
       - name: Test MCP and format tools
         run: npm test

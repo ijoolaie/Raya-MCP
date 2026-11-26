@@ -1,0 +1,41 @@
+{
+    "name":  "@ijoolaie/local-mcp",
+    "version":  "0.1.0",
+    "description":  "Local workspace and machine capabilities implemented on Raya MCP Core.",
+    "type":  "module",
+    "exports":  {
+                    ".":  "./src/server.mjs",
+                    "./advanced-tools":  "./src/advanced-tools.mjs",
+                    "./format-tools":  "./src/format-tools.mjs",
+                    "./url-tools":  "./src/url-tools.mjs"
+                },
+    "files":  [
+                  "src",
+                  "README.md"
+              ],
+    "engines":  {
+                    "node":  "\u003e=20"
+                },
+    "scripts":  {
+                    "start":  "node src/server.mjs",
+                    "start:http":  "node src/server.mjs --http"
+                },
+    "dependencies":  {
+                         "@ijoolaie/mcp-core":  "0.1.0",
+                         "docx":  "^9.14.0",
+                         "exceljs":  "^4.4.0",
+                         "jszip":  "3.10.2",
+                         "mammoth":  "^1.13.0",
+                         "pdf-lib":  "^1.17.1",
+                         "pdf-parse":  "^2.4.5",
+                         "zod":  "4.6.7"
+                     },
+    "publishConfig":  {
+                          "registry":  "https://npm.pkg.github.com"
+                      },
+    "repository":  {
+                       "type":  "git",
+                       "url":  "https://github.com/ijoolaie/Raya-MCP.git",
+                       "directory":  "packages/raya-local-mcp"
+                   }
+}

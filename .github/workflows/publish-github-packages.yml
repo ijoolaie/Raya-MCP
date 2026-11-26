@@ -1,0 +1,92 @@
+name: Publish private npm packages to GitHub Packages
+
+on:
+  push:
+    tags:
+      - "packages-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify modular packages (no publishing)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Verify modular packages and clean installs
+        run: npm run verify:modular
+
+      - name: Verify package versions and tag
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          TAG="$GITHUB_REF_NAME"
+          EXPECTED="packages-v$(node -p "require('./packages/raya-stack/package.json').version")"
+          test "$TAG" = "$EXPECTED"
+
+  publish:
+    name: Publish package set (tag pushes only)
+    needs: verify
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/packages-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://npm.pkg.github.com
+          scope: "@ijoolaie"
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Verify package versions and tag
+        shell: bash
+        run: |
+          TAG="$GITHUB_REF_NAME"
+          EXPECTED="packages-v$(node -p "require('./packages/raya-stack/package.json').version")"
+          test "$TAG" = "$EXPECTED"
+
+      - name: Publish Core
+        run: npm publish --workspace @ijoolaie/mcp-core
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish Local MCP
+        run: npm publish --workspace @ijoolaie/local-mcp
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish Bridge
+        run: npm publish --workspace @ijoolaie/bridge
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish Stack
+        run: npm publish --workspace @ijoolaie/stack
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
