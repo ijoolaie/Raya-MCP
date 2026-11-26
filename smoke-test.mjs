@@ -5,7 +5,7 @@ import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 const here=path.dirname(fileURLToPath(import.meta.url));
-const transport=new StdioClientTransport({command:process.execPath,args:[path.join(here,"server.mjs")]});
+const transport=new StdioClientTransport({command:process.execPath,args:[path.join(here,"server.mjs")],env:{...process.env,MCP_ALLOWED_ROOTS:here}});
 const client=new Client({name:"local-mcp-bridge-smoke-test",version:"0.2.0"});
 let dir;
 const outsideDir=await fs.mkdtemp(path.join(os.tmpdir(),"raya-outside-"));
