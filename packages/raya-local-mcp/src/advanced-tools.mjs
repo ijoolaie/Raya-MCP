@@ -146,7 +146,42 @@ export function registerAdvancedTools(server,{ROOTS}){
  addTool(server,"interact_with_process","Send stdin to a running managed process.",{sessionId:z.string().uuid(),input:z.string().max(16000),appendNewline:z.boolean().optional().default(false)},async({sessionId,input,appendNewline})=>{const s=requireSession(sessionId);if(s.status!=="running"||s.child.stdin.destroyed||!s.child.stdin.writable)throw new Error("Process session is not accepting stdin.");s.child.stdin.write(input+(appendNewline?"\n":""));return result({sent:true,sessionId,characters:input.length,newlineAdded:appendNewline});});
  addTool(server,"list_sessions","List managed sessions without environment variables or secret values.",{includeFinished:z.boolean().optional().default(true)},async({includeFinished})=>result([...sessions.values()].filter(s=>includeFinished||s.status==="running").map(view)));
  addTool(server,"force_terminate","Terminate one managed session by opaque session ID.",{sessionId:z.string().uuid(),force:z.boolean().optional().default(false)},async({sessionId,force})=>{const s=requireSession(sessionId);if(s.status!=="running")return result({sessionId,alreadyStopped:true,status:s.status,exitCode:s.exitCode});s.terminationRequested=true;const outcome=await terminateTree(s,force);return result({sessionId,terminationRequested:true,terminated:true,...outcome});});
- addTool(server,"list_processes","List visible Windows processes without command lines or environment values.",{},async()=>{if(process.platform!=="win32")throw new Error("list_processes currently supports Windows only.");const child=spawn("powershell.exe",["-NoLogo","-NoProfile","-NonInteractive","-Command","Get-Process | Select-Object Id,ProcessName,CPU,WorkingSet64 | ConvertTo-Json -Compress"],{windowsHide:true,shell:false,env:safeChildEnv()});const output=await new Promise((resolve,reject)=>{let out="",err="";const timer=setTimeout(()=>{child.kill();reject(new Error("Process listing timed out."));},30000);child.stdout.on("data",b=>out=append(out,b.toString()));child.stderr.on("data",b=>err=append(err,b.toString()));child.on("error",e=>{clearTimeout(timer);reject(e);});child.on("close",code=>{clearTimeout(timer);code===0?resolve(out):reject(new Error(err||"Process listing failed."));});});let ps;try{ps=JSON.parse(output||"[]");}catch{throw new Error("Could not parse process listing.");}if(!Array.isArray(ps))ps=[ps];return result({count:ps.length,processes:ps.slice(0,1000).map(p=>({pid:p.Id,name:p.ProcessName,cpuSeconds:p.CPU,workingSetBytes:p.WorkingSet64}))});});
+ addTool(server,"list_processes","List visible Windows processes without command lines or environment values.",{},async()=>{
+  if(process.platform!=="win32")throw new Error("list_processes currently supports Windows only.");
+  // tasklist avoids the PowerShell startup and module-loading overhead that can
+  // exceed CI runner timeouts. CSV output is locale-independent and bounded.
+  const child=spawn("tasklist.exe",["/FO","CSV","/NH"],{windowsHide:true,shell:false,env:safeChildEnv(),stdio:["ignore","pipe","pipe"]});
+  const output=await new Promise((resolve,reject)=>{
+   let out="",err="",settled=false;
+   const finish=(error,value)=>{if(settled)return;settled=true;clearTimeout(timer);error?reject(error):resolve(value);};
+   const timer=setTimeout(()=>{try{child.kill();}catch{}finish(new Error("Process listing timed out."));},10000);
+   child.stdout.on("data",b=>{out=append(out,b.toString());if(out.length>1024*1024){try{child.kill();}catch{}finish(new Error("Process listing output exceeded the 1 MiB safety limit."));}});
+   child.stderr.on("data",b=>{err=append(err,b.toString());});
+   child.once("error",e=>finish(e));
+   child.once("close",code=>code===0?finish(null,out):finish(new Error(err||"Process listing failed.")));
+  });
+  const parseCsvRow=line=>{
+   const fields=[];let value="",quoted=false;
+   for(let i=0;i<line.length;i++){
+    const ch=line[i];
+    if(ch==='"'&&quoted&&line[i+1]==='"'){value+='"';i++;}
+    else if(ch==='"')quoted=!quoted;
+    else if(ch===","&&!quoted){fields.push(value);value="";}
+    else value+=ch;
+   }
+   fields.push(value);return fields;
+  };
+  const processes=[];
+  for(const line of output.split(/\\r?\\n/)){
+   if(!line.trim())continue;
+   const fields=parseCsvRow(line),pid=Number(fields[1]);
+   if(!Number.isSafeInteger(pid)||pid<1)continue;
+   const memory=Number(String(fields[4]||"").replace(/[^0-9]/g,""));
+   processes.push({pid,name:String(fields[0]||"").replace(/\\.exe$/i,""),cpuSeconds:null,workingSetBytes:Number.isFinite(memory)?memory*1024:null});
+   if(processes.length>=1000)break;
+  }
+  return result({count:processes.length,processes});
+ });
  addTool(server,"kill_process","Terminate a specific OS PID after checking its live process name; requires explicit confirmation.",{pid:z.number().int().min(1),expectedName:z.string().min(1).max(260),confirm:z.literal(true)},async({pid,expectedName})=>{
   if(process.platform!=="win32")throw new Error("kill_process currently supports Windows only.");
   const inspected=await runPowerShellBounded("Get-Process -Id "+pid+" -ErrorAction Stop | Select-Object Id,ProcessName | ConvertTo-Json -Compress");
