@@ -2,7 +2,7 @@
 import {StdioClientTransport} from "@modelcontextprotocol/sdk/client/stdio.js";
 import fs from "node:fs/promises";import path from "node:path";import {fileURLToPath} from "node:url";
 const here=path.dirname(fileURLToPath(import.meta.url)),dir=path.join(here,".format-smoke-"+process.pid);
-const transport=new StdioClientTransport({command:process.execPath,args:[path.join(here,"server.mjs")]});
+const transport=new StdioClientTransport({command:process.execPath,args:[path.join(here,"server.mjs")],env:{...process.env,MCP_ALLOWED_ROOTS:here}});
 const client=new Client({name:"raya-format-smoke",version:"0.1.0"}),checks=[];
 function parse(r){if(r.isError)throw new Error(JSON.stringify(r));const t=r.content?.find(x=>x.type==="text")?.text;try{return JSON.parse(t)}catch{return t}}
 async function call(name,args={}){return parse(await client.callTool({name,arguments:args}));}
@@ -53,11 +53,3 @@ try{
  check("config persistence",cfg.persisted&&cfg.config.searchMaxDepth===8,cfg);
  console.log(JSON.stringify({ok:true,toolCount:tools.length,checked:checks.length,checks},null,2));
 }finally{await client.close().catch(()=>{});await fs.rm(dir,{recursive:true,force:true}).catch(()=>{});}
-
-
-
-
-
-
-
-

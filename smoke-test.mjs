@@ -5,9 +5,9 @@ import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 const here=path.dirname(fileURLToPath(import.meta.url));
-const transport=new StdioClientTransport({command:process.execPath,args:[path.join(here,"server.mjs")]});
+const transport=new StdioClientTransport({command:process.execPath,args:[path.join(here,"server.mjs")],env:{...process.env,MCP_ALLOWED_ROOTS:here}});
 const client=new Client({name:"local-mcp-bridge-smoke-test",version:"0.2.0"});
-const dir=path.join(here,".mcp-smoke-"+process.pid);
+let dir;
 const outsideDir=await fs.mkdtemp(path.join(os.tmpdir(),"raya-outside-"));
 function parse(r){if(r.isError)throw new Error("Tool returned error: "+JSON.stringify(r));const t=r.content?.find(x=>x.type==="text")?.text;if(!t)throw new Error("Tool returned no text");try{return JSON.parse(t)}catch{return t}}
 async function call(name,args={}){return parse(await client.callTool({name,arguments:args}));}
@@ -21,6 +21,7 @@ try{
  check("tool inventory",expected.every(n=>names.has(n)),[...names]);
  const roots=await call("workspace_roots");
  check("workspace roots",Array.isArray(roots)&&roots.length>0,roots);
+ dir=path.join(roots[0].path,".mcp-smoke-"+process.pid);
  const config=await call("get_config");
  check("config limits",config.settings?.maxSessions>=1&&config.security?.shellIsSandboxed===false,config);
  let blocked=false;try{await call("file_read",{path:"C:\\Windows\\win.ini"})}catch{blocked=true}

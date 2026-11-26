@@ -1,0 +1,35 @@
+{
+    "name":  "@ijoolaie/bridge",
+    "version":  "0.1.0",
+    "description":  "Raya local connectivity and administration bridge, independent of the Local MCP server.",
+    "type":  "module",
+    "exports":  {
+                    "./admin-panel/server":  "./src/admin-panel/server.mjs",
+                    "./connector":  "./src/connector/index.mjs",
+                    "./connector/config":  "./src/connector/config.mjs"
+                },
+    "files":  [
+                  "src",
+                  "README.md",
+                  "mcp-endpoints.example.json"
+              ],
+    "engines":  {
+                    "node":  "\u003e=20"
+                },
+    "scripts":  {
+                    "start:panel":  "node src/admin-panel/server.mjs",
+                    "check":  "node --check src/admin-panel/server.mjs \u0026\u0026 node --check src/connector/index.mjs \u0026\u0026 node --check src/connector/config.mjs \u0026\u0026 node --check test/connector.test.mjs \u0026\u0026 node --check test/config.test.mjs \u0026\u0026 node --check test/admin-panel-ui.test.mjs",
+                    "test":  "node --test"
+                },
+    "dependencies":  {
+                         "@ijoolaie/mcp-core":  "0.1.0"
+                     },
+    "publishConfig":  {
+                          "registry":  "https://npm.pkg.github.com"
+                      },
+    "repository":  {
+                       "type":  "git",
+                       "url":  "https://github.com/ijoolaie/Raya-MCP.git",
+                       "directory":  "packages/raya-bridge"
+                   }
+}

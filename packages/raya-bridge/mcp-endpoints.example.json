@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "endpoints": [
+    {
+      "id": "local-development",
+      "name": "Local development MCP server",
+      "transport": "stdio",
+      "command": "node",
+      "args": ["C:\\path\\to\\your\\mcp-server.mjs"],
+      "cwd": "C:\\path\\to\\your\\workspace",
+      "env": {
+        "SERVICE_API_KEY": "RAYA_SERVICE_API_KEY"
+      }
+    },
+    {
+      "id": "remote-tools",
+      "name": "Remote MCP server",
+      "transport": "streamable-http",
+      "url": "https://mcp.example.com/mcp",
+      "headersEnv": {
+        "Authorization": "RAYA_REMOTE_MCP_TOKEN"
+      }
+    }
+  ]
+}

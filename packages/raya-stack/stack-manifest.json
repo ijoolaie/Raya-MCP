@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "stackVersion": "0.1.0",
+  "components": {
+    "@ijoolaie/mcp-core": {
+      "version": "0.1.0",
+      "role": "protocol-runtime",
+      "dependencies": []
+    },
+    "@ijoolaie/local-mcp": {
+      "version": "0.1.0",
+      "role": "local-capabilities",
+      "dependencies": [
+        "@ijoolaie/mcp-core"
+      ]
+    },
+    "@ijoolaie/bridge": {
+      "version": "0.1.0",
+      "role": "connectivity-and-admin",
+      "dependencies": [
+        "@ijoolaie/mcp-core"
+      ]
+    }
+  },
+  "profiles": {
+    "core-only": {
+      "install": [
+        "@ijoolaie/mcp-core"
+      ],
+      "description": "Protocol runtime only; no local tools or Bridge."
+    },
+    "local-mcp-only": {
+      "install": [
+        "@ijoolaie/local-mcp"
+      ],
+      "description": "Local MCP with Core resolved as a dependency; no Bridge."
+    },
+    "bridge-only": {
+      "install": [
+        "@ijoolaie/bridge"
+      ],
+      "description": "Bridge with Core resolved as a dependency; no Local MCP."
+    },
+    "full-stack": {
+      "install": [
+        "@ijoolaie/stack"
+      ],
+      "description": "Integrated distribution containing Core, Local MCP and Bridge."
+    }
+  }
+}
