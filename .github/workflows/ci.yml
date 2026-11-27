@@ -2,7 +2,7 @@ name: Raya MCP CI
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, research/broker-v2-pinned-read-vertical-slice-20261127]
   push:
     branches: [main]
 
