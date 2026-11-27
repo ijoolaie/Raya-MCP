@@ -76,6 +76,15 @@ The deadline arithmetic is not yet wired into the synchronous message-mode frame
 4. Map Windows failures to the defined ERROR categories without leaking raw paths or sensitive details.
 5. Bind rootId to configured ROOTS and enforce request-scoped HANDLE lifetime before filesystem dispatch.
 
+## Configured root binding and request-scoped handles
+
+`root-registry.c/.h` adds a test-only binding layer. Service configuration supplies 1..8 absolute `rootId -> path` entries. The registry validates the rootId grammar and uniqueness, opens each configured root once with `FILE_FLAG_OPEN_REPARSE_POINT`, checks the returned HANDLE for disk-directory/non-reparse/non-delete-pending state, and retains it until registry shutdown.
+
+A decoded READ_FILE request resolves rootId, opens the parent directory chain relative to the retained root HANDLE, then opens the final regular file relative to that pinned parent. LIST_DIRECTORY resolves the rootId and pins the requested directory; an empty relative path means the configured root. Every request holds an active registry reference. Registry shutdown returns `ERROR_BUSY` until all request contexts close. A context closes its owned file and directory-chain HANDLEs before releasing the reference.
+
+The 44-assertion test covers two distinct configured roots, rootId selection, root-level and nested reads, root and nested directory listing, unknown roots, invalid paths, file size caps, directory-as-file rejection, context cleanup, active-context shutdown refusal, root namespace pinning, and invalid/duplicate configuration. Configured-root symbolic-link creation is skipped locally when privilege is unavailable; CI runs the reparse-root rejection case.
+
+This is not a production root registry. It does not validate root owner/DACL, authenticate the client, load the actual application ROOTS configuration, or integrate with Node handlers. The configured paths are trusted test configuration, not request input.
 ## Relationship to filesystem security
 
 Framing does not authorize filesystem access or repair path races. The receiver must validate all fields before exposing payload bytes, and the filesystem layer must independently enforce the pinned-root/relative-HANDLE policy. The hard-link mutation issue remains a separate unresolved security acceptance question.

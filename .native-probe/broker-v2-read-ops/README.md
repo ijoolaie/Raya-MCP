@@ -9,6 +9,37 @@ Raya Local MCP production handlers or installed as a persistent service.
 dot components, Win32-invalid characters, trailing dots/spaces, alternate data
 stream syntax, and reserved DOS device names. It is a lexical check only.
 
+## Configured root registry and request-scoped HANDLEs
+
+`root-registry.c/.h` is a test-only configured-root binding layer:
+
+- Service configuration supplies a fixed list of 1..8 `rootId -> absolute path`
+  pairs. Request data supplies only the rootId and a validated relative path; it
+  never supplies an absolute filesystem path.
+- Root IDs are syntax-checked and duplicates rejected. Configured paths must be
+  absolute; each root is opened once with `FILE_FLAG_OPEN_REPARSE_POINT` and
+  checked through the returned HANDLE for disk directory type, non-reparse and
+  non-delete-pending state. The root HANDLE is retained until registry shutdown.
+- A READ_FILE request resolves its rootId, opens parent components relative to the
+  pinned root, opens the final regular file relative to the pinned parent, and
+  transfers ownership of the final file HANDLE to the request context.
+- A LIST_DIRECTORY request resolves its rootId and pins the requested directory
+  through the HANDLE chain; an empty relative path binds to the configured root.
+- Active request contexts hold a registry reference. Shutdown returns ERROR_BUSY
+  until all contexts close. A context closes its file and directory-chain HANDLEs
+  before releasing the registry reference.
+- `build-root-registry-context-tests.cmd`: 44 assertions for two-root binding,
+  read/list dispatch, root-level and nested file opens, unknown root rejection,
+  invalid paths, size cap, directory-vs-file rejection, context close/double-close,
+  shutdown while active, root namespace pinning, and atomic invalid-config rejection.
+  Configured-root symbolic-link creation is explicitly skipped locally when
+  ERROR_PRIVILEGE_NOT_HELD (1314); CI exercises this rejection.
+
+This module does not validate root owner/DACL policy, authenticate the caller,
+load production configuration, enforce a service SID, or integrate with Node
+handlers. Configured paths are trusted service configuration and must not come
+from request payloads. It is not Production acceptance.
+
 ## HANDLE-relative directory chain
 
 `handle-chain.c` takes a borrowed, already-authorized root directory HANDLE and a
@@ -69,11 +100,6 @@ This helper therefore does not claim to prevent all future link-count changes or
 provide a volume-wide hard-link prohibition. Whether that residual behavior meets
 the final product policy remains an explicit security acceptance question.
 
-The root HANDLE is borrowed, must already refer to an authorized directory, and is
-validated again by the helper. The helper does not authorize a caller, choose a
-workspace root, or provide a complete file-operation policy. It is not yet
-integrated into Broker v2 or any application handler.
-
 ## I/O cancellation, deadlines and reaper experiments
 
 - `build-io-lifecycle-model.cmd`: pure C state-machine tests (34 assertions) for
@@ -115,8 +141,6 @@ integrated into Broker v2 or any application handler.
   a nonempty relative path; LIST_DIRECTORY may use an empty path to list the root.
   The parser validates UTF-16 surrogate pairs and delegates path syntax to the
   relative-path gate.
-- RootId parsing does not bind the ID to configured ROOTS or authorize it. That
-  registry and request-scoped HANDLE lifecycle remain separate acceptance gates.
 - ERROR payload: numeric code u32, retryable u8, three reserved zero bytes. Codes
   are BAD_REQUEST, UNKNOWN_ROOT, NOT_FOUND, ACCESS_DENIED, UNSUPPORTED_OPERATION,
   RESOURCE_LIMIT, and INTERNAL. ERROR is a terminal sequence-zero frame and is
@@ -137,8 +161,8 @@ integrated into Broker v2 or any application handler.
   terminal ERROR over the pipe; verifies ERROR_MORE_DATA on an undersized read,
   rejects a truncated frame, and fails closed on disconnect between frames.
 - The message-mode transport itself is still a synchronous test harness. The
-  request/per-frame deadline calculation is tested against real overlapped pipe
-  reads, but is not yet wired into the message-frame transport/reaper.
+  request/per-frame deadline calculation is tested against real overlapped reads,
+  but is not yet wired into the message-frame transport/reaper.
 
 ## Test commands
 
@@ -151,6 +175,9 @@ Run from an x64 Native Tools Command Prompt:
   and directory-junction rejection.
 - `build-directory-enumeration-tests.cmd`: HANDLE-relative multi-page directory
   enumeration (30 base assertions; four additional if symlink creation is permitted).
+- `build-root-registry-context-tests.cmd`: configured rootId binding and
+  request-scoped HANDLE lifecycle (44 assertions; one reparse-root assertion is
+  skipped locally when symlink creation is unavailable).
 - `build-io-lifecycle-model.cmd`: synthetic lifecycle model (34 assertions).
 - `build-deadline-tests.cmd`: request/per-frame deadline arithmetic (20 assertions).
 - `build-overlapped-pipe-lifetime-tests.cmd`: actual named-pipe cancellation and
@@ -165,10 +192,12 @@ Run from an x64 Native Tools Command Prompt:
 
 ## Not yet established
 
-This is not production acceptance. Remaining work includes wiring the deadline
-budget into the actual asynchronous message-frame transport/reaper, disconnect
-tests at every protocol phase, rootId-to-ROOTS binding, request-scoped HANDLE
-ownership, directory enumeration consistency under concurrent mutation,
-write/edit/move semantics, broader adversarial race testing, and a decision on
-the residual hard-link mutation behavior. None of the native I/O or frame-codec
-experiments is integrated into the Broker service or Raya Local MCP handlers.
+This is not production acceptance. The root registry is test-only and does not
+validate owner/DACL or authenticate callers. Remaining work includes wiring the
+deadline budget into the actual asynchronous message-frame transport/reaper,
+disconnect tests at every protocol phase, production root configuration and
+request identity binding, directory enumeration consistency under concurrent
+mutation, write/edit/move semantics, broader adversarial race testing, and a
+decision on the residual hard-link mutation behavior. None of the native I/O,
+root-registry or frame-codec experiments is integrated into the Broker service
+or Raya Local MCP handlers.
