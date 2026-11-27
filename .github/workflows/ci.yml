@@ -33,6 +33,10 @@ jobs:
         shell: cmd
         run: .native-probe/broker-v2-read-ops/build-handle-chain-tests.cmd
 
+      - name: Build and test Broker v2 overlapped-I/O lifecycle model
+        shell: cmd
+        run: .native-probe/broker-v2-read-ops/build-io-lifecycle-model.cmd
+
       - name: Set up Node.js
         uses: actions/setup-node@v5
         with:
