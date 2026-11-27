@@ -1,7 +1,7 @@
 # Raya Personal Agent — Architecture and Delivery Roadmap
 
 Status: architecture proposal; no runtime behavior changed.
-Branch: `feature/personal-agent-architecture`
+Branch: `docs/personal-agent-roadmap-mainline-20261127`
 Base: `main`
 
 ## Executive decision
@@ -12,7 +12,7 @@ Keep Raya MCP as the local capability/control plane. Add a separately permission
 
 ## Verified baseline (reconciled 2026-11-27)
 
-- Private GitHub repository: `ijoolaie/Raya-MCP`, default branch `main`.
+- Public GitHub repository: `ijoolaie/Raya-MCP`, default branch `main` (visibility verified through GitHub repository metadata on 2026-11-27).
 - Local Windows checkout: `C:\Users\Ali\local-mcp-bridge`.
 - The modular Local MCP acceptance check on 2026-11-27 completed MCP initialize and `tools/list` successfully and returned 47 tools. This is an isolated local acceptance result, not a claim that every tool has independent security acceptance.
 - Implemented tool families include workspace/file operations, bounded process sessions, search, configuration/diagnostics, HTTPS text retrieval, and PDF/DOCX/XLSX adapters.
@@ -23,6 +23,8 @@ Keep Raya MCP as the local capability/control plane. Add a separately permission
 - Dependency remediation is now present on `main` after PR #8; PR #9 records the remediation and CI evidence. Dependabot alert #1 still requires a direct GitHub Security status check before it can be declared closed.
 - PR #10 merged on 2026-11-27 and restricts the Admin Panel Tunnel Client child-process environment to required Windows runtime variables plus the explicit `CONTROL_PLANE_API_KEY`; this is Bridge hardening, not filesystem-confinement acceptance.
 - PR #11 merged on 2026-11-27 as `c967dcb` after its updated GitHub Actions CI completed successfully. It extracted the hard-link and live ACL-denial probes from the superseded stacked PR #2. Both native addons compiled and both isolated NTFS tests passed on one Windows x64 / Node.js 22.23.2 host. This remains one-host research evidence only; ReFS/SMB/removable/cloud providers and other operation families remain untested. The probes remain research/acceptance assets and are not connected to production handlers.
+- PR #13 carries this roadmap onto the current main baseline and replaces stale Draft PR #3, which had diverged (5 commits ahead / 5 behind). PR #14 similarly carries the shared-client isolation design forward and replaces stale Draft PR #4 (1 ahead / 5 behind). Both replacement PRs are documentation-only and remain Draft pending CI/review.
+- PR #15 is a Draft research-only probe for a handle-relative read-only adapter. Its native build and isolated tests passed on one Windows x64 / Node.js 22.23.2 / NTFS host. A synchronized negative test then proved that a new hard link can be created after the point-in-time NumberOfLinks check and before ReadFile; bytes were still returned. Therefore this candidate does not enforce the approved strict single-link policy across the check/use window and is NOT acceptable as a Production security boundary. The JavaScript root registry in its adapter harness is a test model, not production MCP integration.
 - PR #7 was closed without merge because its root-level Admin Panel and pre-modular architecture conflicted with the current package layout. Its useful environment-isolation work is in PR #10; current curation rules are in merged PR #12.
 - PR #2 and PR #6 were closed without merge because they were stacked on the closed PR #1 and contained superseded/mixed baselines; PR #11 preserves only the narrow NTFS research assets.
 
