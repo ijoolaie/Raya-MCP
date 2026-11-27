@@ -43,39 +43,82 @@ validated again by the helper. The helper does not authorize a caller, choose a
 workspace root, enumerate a directory, or provide a complete file-operation policy.
 It is not yet integrated into Broker v2 or any application handler.
 
-## Tests
+## I/O cancellation and reaper experiments
+
+- `build-io-lifecycle-model.cmd`: pure C state-machine tests (34 assertions) for
+  synchronous/pending completion, cancellation races, late completion, exactly-once
+  reaping, unresolved-operation retention, registry admission caps, and shutdown admission.
+- `build-overlapped-pipe-lifetime-tests.cmd`: disposable local named-pipe experiment
+  using real Windows overlapped ReadFile and CancelIoEx (17 assertions). It verifies
+  pending-read cancellation reaches ERROR_OPERATION_ABORTED, normal completion returns
+  the exact payload, late CancelIoEx after completion returns ERROR_NOT_FOUND, and a
+  cancel/completion race reaches one terminal outcome.
+- `build-overlapped-pipe-reaper-tests.cmd`: four independent pending named-pipe
+  reads backed by heap-allocated OVERLAPPED/buffer/event/pipe-handle records
+  (42 assertions). The request side requests cancellation and returns without
+  touching those resources. A single reaper thread observes all completions, validates
+  terminal cancellation, closes each event and both pipe handles, and releases each
+  record exactly once. If the reaper's five-second grace wait expires, it retains
+  ownership and waits for actual completion rather than freeing pending resources.
+- The real named-pipe tests use disposable in-process pipes only. They do not install
+  a service, touch a workspace, integrate with Broker, or establish behavior for
+  every Windows driver or every supported Windows release.
+- The reaper prototype uses per-operation events and a bounded four-operation
+  registry. This demonstrates a simple ownership path for the experiment, not a
+  final throughput architecture decision. A production cap and whether IOCP is
+  preferable remain to be determined.
+
+## Bounded read frame codec and transport experiment
+
+- `read-frame.h/.c` implements the 16-byte RYA2 envelope with explicit
+  little-endian field encoding; no packed-struct casts or untrusted pointer casts.
+- The decoder rejects bad magic/version/type, truncated headers/payloads, trailing
+  bytes, and payloads above 16 KiB.
+- The response TX/RX state machines implement RESPONSE_HEADER, sequential DATA,
+  END, and one ACK per frame. ACKs echo the acknowledged sequence in both the ACK
+  frame header and its fixed four-byte little-endian payload.
+- The response contract enforces a 256 KiB body cap, 16 KiB maximum chunk, and no
+  more than 16 DATA frames. All DATA chunks must have the exact expected size,
+  including the final short chunk.
+- `build-read-frame-tests.cmd`: 57 pure C assertions covering wire layout,
+  malformed frames, boundaries (zero, one, one chunk, chunk plus one, exact 256 KiB),
+  ACK validation, sequencing, duplicate/stale/future ACKs, invalid ordering, and
+  terminal END behavior.
+- `build-message-pipe-frame-transport-tests.cmd`: 12 actual Windows message-mode
+  pipe assertions. It transfers zero bytes, chunk-plus-one, and exactly 256 KiB
+  through one-message-per-frame with an ACK for each frame; it verifies
+  ERROR_MORE_DATA on a deliberately undersized read, rejects a truncated frame,
+  and fails closed on disconnect between frames.
+- The transport experiment uses synchronous test I/O and does not yet implement
+  bounded per-frame ACK timeouts, an overall request deadline, or full disconnect
+  coverage at every protocol phase. REQUEST payload schema and ERROR semantics
+  are also not implemented. Production transport must treat ERROR_MORE_DATA as
+  malformed/truncated and fail closed.
+
+## Test commands
+
+Run from an x64 Native Tools Command Prompt:
 
 - `build-and-test.cmd`: MSVC x64 lexical path tests (25 cases).
-- `build-handle-chain-tests.cmd`: MSVC x64 tests for nested HANDLE-relative
-  directory opens, traversal rejection, rename blocking, final-file open,
-  size cap, directory rejection, hard-link detection, active-handle stability
-  after link-count change, and directory-junction rejection.
-- `build-io-lifecycle-model.cmd`: MSVC x64 pure state-machine tests for
-  synchronous/pending completion, cancellation races, late completion,
-  exactly-once reaping, unresolved-operation retention, shutdown admission, and
-  bounded active-operation count. Current result: 34 passed, 0 failed.
-- The I/O lifecycle tests are synthetic and do not issue real named-pipe I/O,
-  call CancelIoEx, or prove Windows driver cancellation behavior.
-- File symbolic-link creation is attempted when Windows policy permits it;
-  otherwise the test reports an explicit skip. Directory junction creation is
-  independently tested.
-
-## Next protocol and I/O lifetime work
-
-- `read-protocol-design.md` records a proposed bounded multi-frame read protocol.
-  It is a design note only; no frame codec or transport is implemented.
-- `cancellation-lifecycle-design.md` defines the proposed OVERLAPPED/buffer/HANDLE
-  lifetime invariants, cancellation state machine, bounded admission, shutdown
-  behavior, and deterministic tests. It is a design proposal, not an implementation.
-- `io-lifecycle-model.c` is a synthetic executable model of the state transitions.
-  It does not own actual Windows handles or OVERLAPPED structures.
-- Frame codec work remains gated on review and deterministic testing of the
-  cancellation ownership model. The two concerns must not be conflated.
+- `build-handle-chain-tests.cmd`: nested HANDLE-relative directory opens,
+  traversal rejection, rename blocking, final-file open, size cap, directory
+  rejection, hard-link detection, active-handle stability after link-count change,
+  and directory-junction rejection.
+- `build-io-lifecycle-model.cmd`: synthetic lifecycle model (34 assertions).
+- `build-overlapped-pipe-lifetime-tests.cmd`: actual named-pipe cancellation
+  experiment (17 assertions).
+- `build-overlapped-pipe-reaper-tests.cmd`: heap-owned operation/reaper
+  experiment (42 assertions).
+- `build-read-frame-tests.cmd`: bounded read-frame codec and sequence state
+  machine (57 assertions).
+- `build-message-pipe-frame-transport-tests.cmd`: message-mode pipe framing
+  experiment (12 assertions).
 
 ## Not yet established
 
-This is not production acceptance. Additional work is required for directory
-enumeration, response framing, actual overlapped-I/O ownership and cancellation
-testing, resource limits, broader adversarial race testing across supported
-Windows versions, and a decision on the residual hard-link mutation behavior
-described above.
+This is not production acceptance. Additional work is required for bounded transport
+deadlines, REQUEST/ERROR contract, directory enumeration, resource limits, broader
+adversarial race testing across supported Windows versions, and a decision on the
+residual hard-link mutation behavior described above. None of the native I/O or
+frame-codec experiments is integrated into the Broker service or Raya Local MCP
+handlers.
