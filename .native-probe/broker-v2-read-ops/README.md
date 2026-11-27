@@ -45,7 +45,8 @@ separate handle-relative open and same-HANDLE revalidation.
   directory itself was blocked. Concurrent create/delete/rename can therefore
   change which entries appear across pages; callers must not assume snapshot
   semantics or use returned names as authorization.
-- `build-directory-enumeration-tests.cmd`: 30 base assertions (plus four when`r`n  directory symbolic-link creation is permitted) over 1,200 files across
+- `build-directory-enumeration-tests.cmd`: 30 base assertions (plus four when
+  directory symbolic-link creation is permitted) over 1,200 files across
   multiple pages, no duplicate/omitted names in a stable fixture, restart,
   over-cap failure, empty-directory end, invalid handles, and directory rename
   pinning. Directory symbolic-link creation was explicitly skipped on this host
@@ -136,7 +137,7 @@ Run from an x64 Native Tools Command Prompt:
   rejection, hard-link detection, active-handle stability after link-count change,
   and directory-junction rejection.
 - `build-directory-enumeration-tests.cmd`: HANDLE-relative multi-page directory
-  enumeration (30 assertions).
+  enumeration (30 base assertions; 4 additional if symlink creation is permitted).
 - `build-io-lifecycle-model.cmd`: synthetic lifecycle model (34 assertions).
 - `build-overlapped-pipe-lifetime-tests.cmd`: actual named-pipe cancellation
   experiment (17 assertions).
