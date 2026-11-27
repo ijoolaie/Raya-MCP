@@ -31,9 +31,9 @@ static void free_sid_fixtures(SID_FIXTURES *sids)
 {
     if (sids->token_user != NULL) HeapFree(GetProcessHeap(), 0, sids->token_user);
     if (sids->token != NULL) CloseHandle(sids->token);
+    if (sids->client != NULL) HeapFree(GetProcessHeap(), 0, sids->client);
     if (sids->system != NULL) HeapFree(GetProcessHeap(), 0, sids->system);
     if (sids->admins != NULL) HeapFree(GetProcessHeap(), 0, sids->admins);
-    if (sids->client != NULL) HeapFree(GetProcessHeap(), 0, sids->client);
     if (sids->everyone != NULL) HeapFree(GetProcessHeap(), 0, sids->everyone);
     ZeroMemory(sids, sizeof(*sids));
 }
@@ -54,6 +54,12 @@ static BOOL init_sid_fixtures(SID_FIXTURES *sids)
             needed, &needed))
         return FALSE;
     sids->service = ((TOKEN_USER *)sids->token_user)->User.Sid;
+
+    sid_size = SECURITY_MAX_SID_SIZE;
+    sids->client = (PSID)HeapAlloc(GetProcessHeap(), 0, sid_size);
+    if (sids->client == NULL || !CreateWellKnownSid(WinLocalServiceSid, NULL,
+            sids->client, &sid_size))
+        return FALSE;
     sid_size = SECURITY_MAX_SID_SIZE;
     sids->system = (PSID)HeapAlloc(GetProcessHeap(), 0, sid_size);
     if (sids->system == NULL || !CreateWellKnownSid(WinLocalSystemSid, NULL,
@@ -65,18 +71,12 @@ static BOOL init_sid_fixtures(SID_FIXTURES *sids)
             NULL, sids->admins, &sid_size))
         return FALSE;
     sid_size = SECURITY_MAX_SID_SIZE;
-    sids->client = (PSID)HeapAlloc(GetProcessHeap(), 0, sid_size);
-    if (sids->client == NULL || !CreateWellKnownSid(WinLocalServiceSid, NULL,
-            sids->client, &sid_size))
-        return FALSE;
-    sid_size = SECURITY_MAX_SID_SIZE;
     sids->everyone = (PSID)HeapAlloc(GetProcessHeap(), 0, sid_size);
     if (sids->everyone == NULL || !CreateWellKnownSid(WinWorldSid, NULL,
             sids->everyone, &sid_size))
         return FALSE;
     return TRUE;
 }
-
 static BOOL create_policy_directory(
     const wchar_t *path,
     SID_FIXTURES *sids,
@@ -167,6 +167,160 @@ static HANDLE open_policy_directory(const wchar_t *path)
         FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
 }
 
+static BOOL create_client_writable_destination(
+    const wchar_t *path,
+    SID_FIXTURES *sids)
+{
+    DWORD acl_size = sizeof(ACL);
+    DWORD inherit = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE;
+    PACL acl = NULL;
+    PSECURITY_DESCRIPTOR sd = NULL;
+    SECURITY_ATTRIBUTES sa;
+    BOOL ok = FALSE;
+
+    acl_size += sizeof(ACCESS_ALLOWED_ACE) +
+        GetLengthSid(sids->service) - sizeof(DWORD);
+    acl_size += sizeof(ACCESS_ALLOWED_ACE) +
+        GetLengthSid(sids->client) - sizeof(DWORD);
+    acl = (PACL)LocalAlloc(LMEM_FIXED, acl_size);
+    sd = (PSECURITY_DESCRIPTOR)LocalAlloc(LMEM_FIXED,
+        SECURITY_DESCRIPTOR_MIN_LENGTH);
+    if (acl == NULL || sd == NULL ||
+        !InitializeAcl(acl, acl_size, ACL_REVISION) ||
+        !AddAccessAllowedAceEx(acl, ACL_REVISION, inherit,
+            FILE_ALL_ACCESS, sids->service) ||
+        !AddAccessAllowedAceEx(acl, ACL_REVISION, inherit,
+            FILE_ALL_ACCESS, sids->client) ||
+        !InitializeSecurityDescriptor(sd, SECURITY_DESCRIPTOR_REVISION) ||
+        !SetSecurityDescriptorOwner(sd, sids->service, FALSE) ||
+        !SetSecurityDescriptorDacl(sd, TRUE, acl, FALSE) ||
+        !SetSecurityDescriptorControl(sd, SE_DACL_PROTECTED, SE_DACL_PROTECTED))
+        goto done;
+
+    sa.nLength = sizeof(sa);
+    sa.lpSecurityDescriptor = sd;
+    sa.bInheritHandle = FALSE;
+    ok = CreateDirectoryW(path, &sa);
+
+done:
+    if (sd != NULL) LocalFree(sd);
+    if (acl != NULL) LocalFree(acl);
+    return ok;
+}
+static void test_client_read_only_and_hardlink(
+    const wchar_t *root_path,
+    const wchar_t *temp,
+    SID_FIXTURES *sids)
+{
+    wchar_t file_path[MAX_PATH];
+    wchar_t link_path[MAX_PATH];
+    wchar_t destination_path[MAX_PATH];
+    wchar_t dummy_path[MAX_PATH];
+    HANDLE file = INVALID_HANDLE_VALUE;
+    HANDLE token = NULL;
+    HANDLE restricted = NULL;
+    SID_AND_ATTRIBUTES restricted_sid;
+    const char payload[] = "root-policy-inheritance";
+    DWORD written = 0;
+    DWORD read_count = 0;
+    char readback[sizeof(payload)] = { 0 };
+    FILE_STANDARD_INFO standard;
+    BOOL linked;
+    DWORD link_error;
+
+    (void)swprintf_s(file_path, MAX_PATH, L"%s\\payload.txt", root_path);
+    (void)swprintf_s(destination_path, MAX_PATH, L"%s\\RayaHardlinkDestination-%lu", temp, (unsigned long)GetCurrentProcessId());
+    (void)swprintf_s(link_path, MAX_PATH, L"%s\\client-link.txt", destination_path);
+    (void)swprintf_s(dummy_path, MAX_PATH, L"%s\\client-write-test.txt", destination_path);
+    CHECK("create client-writable external destination directory", create_client_writable_destination(destination_path, sids));
+    file = CreateFileW(file_path, GENERIC_WRITE, 0, NULL, CREATE_NEW,
+        FILE_ATTRIBUTE_NORMAL, NULL);
+    CHECK("create child file under protected configured root",
+        file != INVALID_HANDLE_VALUE);
+    if (file == INVALID_HANDLE_VALUE)
+        return;
+    CHECK("write child fixture before client impersonation",
+        WriteFile(file, payload, (DWORD)(sizeof(payload) - 1u), &written, NULL) &&
+        written == sizeof(payload) - 1u);
+    CloseHandle(file);
+
+    if (!OpenProcessToken(GetCurrentProcess(),
+            TOKEN_DUPLICATE | TOKEN_QUERY | TOKEN_IMPERSONATE, &token)) {
+        CHECK("open process token for restricted client", FALSE);
+        return;
+    }
+    restricted_sid.Sid = sids->client;
+    restricted_sid.Attributes = 0;
+    CHECK("create restricted client token requiring client SID access",
+        CreateRestrictedToken(token, DISABLE_MAX_PRIVILEGE,
+            0, NULL, 0, NULL, 1, &restricted_sid, &restricted));
+    if (restricted == NULL) {
+        CloseHandle(token);
+        return;
+    }
+    CHECK("impersonate read-only configured-root client",
+        ImpersonateLoggedOnUser(restricted));
+    if (!OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE, &file)) {
+        CHECK("verify impersonation token is active", FALSE);
+        RevertToSelf();
+        CloseHandle(restricted);
+        CloseHandle(token);
+        return;
+    }
+    CloseHandle(file);
+    file = CreateFileW(file_path, FILE_READ_DATA | FILE_READ_ATTRIBUTES | READ_CONTROL | SYNCHRONIZE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    CHECK("authorized client can read inherited child file",
+        file != INVALID_HANDLE_VALUE);
+    CHECK("authorized client reads exact inherited file content",
+        file != INVALID_HANDLE_VALUE &&
+        ReadFile(file, readback, (DWORD)(sizeof(payload) - 1u), &read_count, NULL) &&
+        read_count == sizeof(payload) - 1u &&
+        memcmp(readback, payload, read_count) == 0);
+    if (file != INVALID_HANDLE_VALUE)
+        CloseHandle(file);
+
+    file = CreateFileW(file_path, GENERIC_WRITE, FILE_SHARE_READ,
+        NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    CHECK("authorized client cannot open child file for write",
+        file == INVALID_HANDLE_VALUE && GetLastError() == ERROR_ACCESS_DENIED);
+    if (file != INVALID_HANDLE_VALUE)
+        CloseHandle(file);
+
+    file = CreateFileW(dummy_path, GENERIC_WRITE, 0, NULL, CREATE_NEW,
+        FILE_ATTRIBUTE_NORMAL, NULL);
+    CHECK("authorized client can create an unrelated file in external destination",
+        file != INVALID_HANDLE_VALUE);
+    if (file != INVALID_HANDLE_VALUE) {
+        (void)WriteFile(file, payload, (DWORD)(sizeof(payload) - 1u), &written, NULL);
+        CloseHandle(file);
+        (void)DeleteFileW(dummy_path);
+    }
+
+    linked = CreateHardLinkW(link_path, file_path, NULL);
+    link_error = linked ? ERROR_SUCCESS : GetLastError();
+    CHECK("authorized client cannot create a hard link into configured root",
+        !linked && link_error == ERROR_ACCESS_DENIED);
+    if (linked)
+        (void)DeleteFileW(link_path);
+    file = CreateFileW(file_path, FILE_READ_ATTRIBUTES | READ_CONTROL,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    CHECK("denied hard-link attempt leaves exactly one file link",
+        file != INVALID_HANDLE_VALUE &&
+        GetFileInformationByHandleEx(file, FileStandardInfo, &standard, sizeof(standard)) &&
+        standard.NumberOfLinks == 1);
+    if (file != INVALID_HANDLE_VALUE)
+        CloseHandle(file);
+
+    CHECK("revert from restricted client impersonation", RevertToSelf());
+    CloseHandle(restricted);
+    CloseHandle(token);
+    (void)DeleteFileW(file_path);
+    (void)RemoveDirectoryW(destination_path);
+    (void)sids;
+}
 int main(void)
 {
     SID_FIXTURES sids;
@@ -215,6 +369,7 @@ int main(void)
     CHECK("create all protected/untrusted DACL fixtures", fixtures_ok);
 
     if (fixtures_ok) {
+        test_client_read_only_and_hardlink(paths[0], temp, &sids);
         for (size_t i = 0; i < (sizeof(variants) / sizeof(variants[0])); ++i) {
             HANDLE root = open_policy_directory(paths[i]);
             CHECK("open root security fixture with READ_CONTROL",

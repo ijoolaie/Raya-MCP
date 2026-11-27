@@ -558,5 +558,5 @@ $note = @'
 
 - Added raya_validate_root_security and raya_root_registry_init_secure to the isolated native research. Security is checked from the already-open root HANDLE: service SID owner, present protected DACL, exactly four inheritable allow ACEs, service/SYSTEM/Administrators full access and authorized client read-only.
 - Rejects extra/unknown trustees (including Everyone), duplicate ACEs, wrong client rights, wrong inheritance flags and default inherited DACLs. Secure registry initialization closes all opened root HANDLEs if any root fails validation.
-- New build-root-security-policy-tests.cmd passes 19 assertions locally. Fixture uses current process user SID as a synthetic service owner and LocalService as synthetic client; it does not prove actual service identity or authenticated pipe peer identity.
+- New build-root-security-policy-tests.cmd passes 31 assertions locally. Fixture uses current process user SID as a synthetic service owner and LocalService as synthetic client; it does not prove actual service identity or authenticated pipe peer identity.
 - The CI workflow now includes the root-security policy test. Production client.policy loading and named-pipe client token/session binding remain open.

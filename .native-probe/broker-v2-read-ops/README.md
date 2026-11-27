@@ -108,7 +108,7 @@ are rejected. raya_root_registry_init_secure opens configured roots and validate
 every root before returning a usable registry; on any failure it closes all
 opened root HANDLEs and fails atomically.
 
-- build-root-security-policy-tests.cmd: 19 assertions for the exact valid
+- build-root-security-policy-tests.cmd: 31 assertions for the exact valid
   descriptor, extra Everyone ACE, overbroad client rights, duplicate service ACE,
   wrong inheritance flags, default inherited DACL, secure init success and
   secure init rejection.

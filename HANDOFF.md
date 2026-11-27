@@ -1216,6 +1216,6 @@ No Production service installation, production ACL migration, real workspace dep
 ## 2026-11-27 configured-root security policy adapter
 
 - Added raya_validate_root_security and raya_root_registry_init_secure. The validator checks owner SID and exact protected DACL from the already-open root HANDLE: service/SYSTEM/Administrators full, authorized client read-only, exactly four inheritable allow ACEs, no unknown/duplicate/broad ACEs.
-- Secure registry initialization closes all opened roots if any root fails validation. New root-security-policy test passes 19 assertions locally.
+- Secure registry initialization closes all opened roots if any root fails validation. New root-security-policy test passes 31 assertions locally.
 - The fixture uses current process user SID as a synthetic service identity and LocalService as client. It does not authenticate the actual service or named-pipe peer; production client.policy loading, service identity validation and token/session binding remain open.
 - New CI step was added for this test; run all thirteen native commands and poll the new CI run after push.

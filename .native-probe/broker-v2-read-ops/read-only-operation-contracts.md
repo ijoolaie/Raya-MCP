@@ -101,7 +101,7 @@ inheritable allow ACEs: service/SYSTEM/Administrators full access and the
 authorized client with the explicit read-only mask. Unknown/duplicate trustees,
 extra ACEs, broad principals, wrong masks/flags and default inherited DACLs are
 rejected. raya_root_registry_init_secure validates all opened roots and closes
-the registry atomically if any root fails. Its 19-assertion test includes valid
+the registry atomically if any root fails. Its 31-assertion test includes valid
 and negative descriptors and secure-init behavior. The test uses the current
 process SID as a synthetic service identity; it does not authenticate the actual
 service process or pipe client. Production client.policy and peer-token binding
