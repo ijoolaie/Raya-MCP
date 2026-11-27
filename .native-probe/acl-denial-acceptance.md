@@ -35,3 +35,7 @@ It does not establish:
 - race-free Production integration or complete Phase 1 acceptance.
 
 No global/user-profile ACLs were changed. No Production handler, configured ROOTS, runtime setting, service or tunnel was changed. Phase 1 remains IN PROGRESS / NOT ACCEPTED; Production remains NO-GO until all operation-family, root binding, lifecycle, provider and independent review gates pass.
+
+## Additional isolated revalidation — 2026-11-27
+
+Rebuilt both test addons from this branch on a clean isolated Windows checkout using Node.js 22.23.2 x64 and Visual Studio 2026 Build Tools 18.7.3. The portable build script exited 0. The live ACL harness then exited 0: file create, directory create and read each returned `STATUS_ACCESS_DENIED (0xC0000022)`; after removing only the temporary deny ACEs, read and both create operations succeeded. Native HANDLE count returned to baseline and the disposable fixture was removed. This revalidation is limited to the current Windows/NTFS host and the three operations listed above.
