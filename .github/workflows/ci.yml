@@ -2,7 +2,7 @@ name: Raya MCP CI
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, research/broker-v2-pinned-read-vertical-slice-20261127]
   push:
     branches: [main]
 
@@ -19,6 +19,61 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build and test Broker v2 relative-path lexical gate
+        shell: cmd
+        run: .native-probe/broker-v2-read-ops/build-and-test.cmd
+
+      - name: Build and test Broker v2 HANDLE-relative directory chain
+        shell: cmd
+        run: .native-probe/broker-v2-read-ops/build-handle-chain-tests.cmd
+
+      - name: Build and test Broker v2 HANDLE-relative directory enumeration
+        shell: cmd
+        run: .native-probe/broker-v2-read-ops/build-directory-enumeration-tests.cmd
+
+      - name: Build and test Broker v2 configured root registry and request contexts
+        shell: cmd
+        run: .native-probe/broker-v2-read-ops/build-root-registry-context-tests.cmd
+      - name: Build and test exact configured-root owner and protected DACL policy
+        shell: cmd
+        run: .native-probe/broker-v2-read-ops/build-root-security-policy-tests.cmd
+
+      - name: Build and test Broker v2 overlapped-I/O lifecycle model
+        shell: cmd
+        run: .native-probe/broker-v2-read-ops/build-io-lifecycle-model.cmd
+
+      - name: Build and test request and per-frame overlapped I/O deadlines
+        shell: cmd
+        run: .native-probe/broker-v2-read-ops/build-deadline-tests.cmd
+
+      - name: Build and test disposable named-pipe overlapped cancellation
+        shell: cmd
+        run: .native-probe/broker-v2-read-ops/build-overlapped-pipe-lifetime-tests.cmd
+
+      - name: Build and test heap-owned overlapped I/O reaper
+        shell: cmd
+        run: .native-probe/broker-v2-read-ops/build-overlapped-pipe-reaper-tests.cmd
+
+      - name: Build and test bounded read frame codec and sequence state
+        shell: cmd
+        run: .native-probe/broker-v2-read-ops/build-read-frame-tests.cmd
+
+      - name: Build and test REQUEST and ERROR payload contracts
+        shell: cmd
+        run: .native-probe/broker-v2-read-ops/build-request-error-tests.cmd
+
+      - name: Build and test message-mode named-pipe frame transport
+        shell: cmd
+        run: .native-probe/broker-v2-read-ops/build-message-pipe-frame-transport-tests.cmd
+      - name: Build and test overlapped message-mode frame deadlines and cancellation
+        shell: cmd
+        run: .native-probe/broker-v2-read-ops/build-overlapped-message-frame-tests.cmd
 
       - name: Set up Node.js
         uses: actions/setup-node@v5

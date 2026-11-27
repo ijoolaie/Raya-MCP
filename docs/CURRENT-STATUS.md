@@ -436,3 +436,127 @@ Fresh verification after adding the stress harness: `npm run test:native-publish
 The identity-conditional replacement decision above remains unchanged: existing-file atomic edit is unsupported / fail closed. The publish stress proves atomic create-if-absent contention only, not replacement. Phase 1 remains IN PROGRESS / NOT ACCEPTED; Production remains NO-GO; live ACL permission-denied acceptance remains open.
 
 Next: continue the remaining operation-family acceptance work with the same test-only discipline. Keep existing-file atomic edit unsupported unless a filesystem/provider-specific identity-conditional transaction or a separately approved weaker cooperative/in-place contract is proven; do not weaken the threat model. The Windows rename API exposes replace/no-replace and POSIX replacement semantics, but no expected-target-FileId compare-and-swap contract; do not implement existing-file atomic edit until that gap is resolved. A separate test-only atomic create-if-absent publish primitive is now implemented and verified (9 checks). The publish test, existing rename stress (5 rounds / 20 workers / 120 assertions), npm run lint, and npm test all exited 0. See .native-probe/mutation-adapter-contract.md. This primitive does not replace existing files; no Production handlers, native source, ROOTS, runtime settings, services, tunnels, or permissions were changed.
+
+
+## Broker v2 read-path research update — 2026-11-27
+
+This section supersedes the older October 30 "Immediate next action" entries below for the current PR #19/#20 research branch. It does not change the Phase 1 acceptance gate.
+
+### PR #19 — pinned-root Broker v2 read-only slice
+- Remains an independent Draft PR; not merged or connected to production handlers.
+- The one-host elevated acceptance run created a uniquely named disposable virtual-service-account probe, validated the protected root DACL, rejected an injected Everyone Modify ACE, exercised restricted-token write/DACL/owner/attribute/directory-create/image-write/hard-link denials, and verified cleanup removed the test service, process, fixture and image.
+- This is a test-only fixed-root read slice, not general filesystem authorization or operation-family parity.
+
+### PR #20 — read-path foundations
+- Latest branch head at this update: `31d45eec805f7681b8f4e261f1b44d613c802176`; PR remains Draft and not merged.
+- Added UTF-16 relative-path lexical validation; HANDLE-relative nested directory opens; same-HANDLE final regular-file open; bounded HANDLE-relative directory enumeration; a synthetic I/O lifecycle model; real disposable overlapped named-pipe cancellation; a heap-owned four-operation reaper experiment; a bounded RYA2 frame codec/response state machine; and a message-mode named-pipe frame transport experiment.
+- Local MSVC x64 evidence: lexical 25 assertions; directory enumeration 39 base assertions; lifecycle model 34; overlapped cancellation 17; reaper 42; frame codec/state 57; message-mode transport 12. HANDLE-chain tests passed with the file-symbolic-link case explicitly skipped because this host disallowed it. Directory symbolic-link creation was also skipped locally with ERROR_PRIVILEGE_NOT_HELD (1314).
+- GitHub Actions run #55 failed only in the directory-enumeration test: the test inspected only the first OS page even though the created reparse entry was on a later page. The harness now iterates every page before checking the reparse entry. Run #56 (commit `d559e1d`) is in progress; its result must be observed before claiming CI acceptance for the latest PR head.
+- A directory HANDLE opened with read-only sharing blocked directory rename on this host, but did not block creation of a new child. Enumeration is therefore not a snapshot. Calls on one HANDLE must be serialized; returned names are not authorization and must be reopened relative to the pinned parent HANDLE and revalidated.
+- The message-mode transport is still a synchronous test harness. Bounded per-frame ACK deadlines, an overall request deadline, REQUEST schema, ERROR semantics and disconnect coverage at every protocol phase are not implemented.
+- The reaper prototype demonstrates one safe ownership pattern at a bounded four-operation test scale. It is not yet a final production concurrency cap or an IOCP-vs-event architecture decision.
+
+### Phase 1 acceptance status
+
+**IN PROGRESS / NOT ACCEPTED. Production filesystem confinement remains NO-GO.**
+
+The source-to-contract audit still identifies all 15 registered filesystem operations/modes as not accepted: `workspace_roots`, `workspace_list`, `file_read`, `file_read_chunk`, `file_write`, `file_write_chunk`, `create_directory`, `get_file_info`, `read_multiple_files`, `list_directory`, `move_file`, `edit_block`, `start_search` filename mode, `start_search` content mode, and `read_file_tail`.
+
+The following blockers remain:
+1. The NumberOfLinks == 1 observation can become stale: Windows permits a new hard link after the check while the read HANDLE is still open. The protected-root/restricted-token denial tests are useful evidence, but the final threat-model decision and enforcement proof remain open.
+2. Directory enumeration is bounded and HANDLE-relative but not snapshot-consistent under concurrent child creation/deletion; reparse-entry runtime coverage was skipped locally due privilege restrictions (CI rerun pending).
+3. The frame transport lacks bounded ACK and request-wide deadlines, complete REQUEST/ERROR schemas, and full disconnect-phase coverage.
+4. RootId-to-configured-ROOTS binding and request-scoped HANDLE lifecycle must be accepted end-to-end.
+5. The operation-family race, transaction, permission-denied, failure/cleanup and provider-compatibility matrices remain incomplete.
+6. The native probes are not integrated into production handlers. No production service, ACL migration, workspace deployment or runtime fallback was performed.
+
+Exact next action: obtain a green latest-head CI run; then add bounded transport deadlines and REQUEST/ERROR semantics, expand the native transport disconnect tests, and continue the operation-family acceptance matrix. Do not integrate any candidate into Production until every Phase 1 gate is satisfied.
+
+
+### PR #20 follow-up — request/error contract and deadlines (2026-11-27)
+- Latest PR #20 head: `e9e1788a954a572a221160ed7e83a4a0c46bfc9d`; remains Draft, not merged.
+- Added REQUEST payload schema: operation code, syntactically constrained rootId, UTF-16LE relative path, zero reserved field; READ_FILE requires a nonempty path and LIST_DIRECTORY permits the configured root. This validates syntax only; it does not bind rootId to configured ROOTS or authorize the caller.
+- Added terminal ERROR payload with bounded numeric codes, retryable flag and reserved-zero checks; ACK is required for the terminal error.
+- Added overflow-safe monotonic deadline arithmetic: one overall request deadline and each frame budget is the minimum of its per-frame cap and remaining request time.
+- Extended actual overlapped named-pipe tests to 23 assertions. Two pending reads were canceled and safely reaped under one 500 ms request deadline with 200 ms per-frame caps; the second frame received only the remaining budget.
+- Added request/error contract tests (44) and deterministic deadline tests (20). Message-mode pipe transport now has 28 assertions, including REQUEST and terminal ERROR round-trip.
+- All ten native commands passed locally on this host. The preceding GitHub Actions run #56 completed green end-to-end for commit `d559e1d` (all then-configured native tests, npm audit, syntax, modular verification and MCP tests). The new commit `e9e1788` adds two more CI test commands; its own CI run must complete before claiming latest-head CI acceptance.
+- The framed message-mode transport remains a synchronous test harness. The deadline arithmetic is tested against real overlapped reads, but it is not yet wired into the message-frame transport/reaper.
+
+## 2026-11-27 follow-up — configured root registry and request contexts
+
+- PR #20 latest head: ae0ea46126b4daee5d62e8ea2d5fafb94acabae5; Draft, not merged.
+- Added test-only root-registry.c/.h: trusted config maps 1..8 unique rootIds to absolute paths; roots are opened once and retained; requests resolve rootId and use relative paths only.
+- READ_FILE pins parent components relative to the configured root and opens the final regular file; LIST_DIRECTORY pins the requested directory. Active request contexts hold a registry reference; registry close refuses with ERROR_BUSY until contexts release their handles.
+- The module validates configured root path type/reparse/delete-pending state, but it does NOT validate owner/DACL, authenticate the caller, load the application's actual ROOTS configuration, or integrate with Node handlers.
+- Added 44 root-registry/request-context assertions: two-root selection, root and nested reads/listings, invalid root/path rejection, size caps, directory-vs-file rejection, request cleanup, shutdown while active, root namespace pinning and atomic invalid-config handling. Configured-root symlink test is skipped locally due ERROR_PRIVILEGE_NOT_HELD (1314); CI is expected to exercise it.
+- All eleven native test commands passed locally on Windows x64 / MSVC. The previous CI run #58 was fully green for commit e9e1788; latest run #59 for ae0ea46 is in progress and includes the new root-registry test.
+- Phase 1 remains IN PROGRESS / NOT ACCEPTED. All 15 production filesystem operations/modes remain unaccepted. Production confinement remains NO-GO.
+
+## 2026-11-27 follow-up — end-to-end read-only vertical slice
+
+- PR #20 latest head: d6a896675f1500a3834879bbed64a68efd43228d; Draft, not merged.
+- Extended message-mode named-pipe tests to 86 assertions. The new end-to-end test sends a REQUEST, decodes its schema, resolves the configured rootId, acquires a request-scoped root/file HANDLE, reads the file, sends RESPONSE_HEADER/DATA/END as separate pipe messages, and validates the ACK for every frame.
+- The vertical slice is still test-only and synchronous at the message-frame layer. It is not connected to the Broker service or Node handlers. The async deadline budget is tested separately against real overlapped pipe reads, not yet wired into this framed transport.
+- All eleven native commands passed locally. GitHub Actions run #59 is fully green for the preceding commit ae0ea46, including all native commands, npm audit, lint, modular verification and MCP tests. Run #60 (ID 45971616128) for latest head d6a8966 is queued and must be observed.
+- Remaining blockers: production root owner/DACL and client identity validation, production ROOTS integration, async framed ACK deadlines and disconnect coverage at each protocol phase, all write/edit/move/rename/delete operation families, operation race/transaction matrices, and hard-link mutation policy.
+- Phase 1 remains IN PROGRESS / NOT ACCEPTED. All 15 production filesystem operations/modes remain unaccepted; production confinement remains NO-GO.
+
+\n
+
+### 2026-11-27 — current Phase 1 research status
+
+- PR #20 remains Draft. Last pushed head: d74c23c4213c518db768a84771a1d48f290c74da. Run #63 (45973916065) is fully green for that head.
+- Test-only REQUEST schema now has five read-only operation codes: READ_FILE, LIST_DIRECTORY, GET_FILE_INFO, READ_FILE_CHUNK and READ_FILE_TAIL. Its fixed header is 20 bytes and carries a checked 64-bit offset and bounded 32-bit length.
+- File reads and metadata use the same validated final-file HANDLE. Chunk reads require an exact in-file range; tail reads return up to the requested suffix. Request contexts pin parent directory chains and hold registry references. Root-level LIST_DIRECTORY creates an independent root HANDLE view from the path obtained through the pinned root HANDLE and verifies exact volume serial plus 128-bit file ID, preventing shared enumeration cursors.
+- A new overlapped message-mode ACK-read experiment applies a shared monotonic request deadline and per-frame cap. Timeout transfers the heap-owned OVERLAPPED/event/buffer/pipe HANDLE to a per-operation reaper thread and returns with a caller-owned completion ticket. The reaper frees resources only after terminal completion; a four-operation cap rejects the fifth outstanding operation. It has 58 assertions and passed four consecutive local runs. This is not a shared persistent reaper and is not integrated into the full framed transport.
+- Twelve native test commands pass locally on Windows x64/MSVC. Key counts: root registry/request contexts 67; REQUEST/ERROR 62; message-mode transport 109; overlapped message-mode ACK reads 58; I/O lifecycle 34; deadline arithmetic 20; overlapped cancellation 23; reaper 42; frame codec 57. Some symbolic-link fixtures are explicit SKIPs due ERROR_PRIVILEGE_NOT_HELD (1314).
+- Next increment must be committed/pushed and its own CI observed. Then integrate the tested per-operation reaper into full asynchronous message-mode frame/ACK operations and compare shared-reaper/IOCP alternatives.
+- Remaining gates: production root owner/DACL and authenticated client identity; production ROOTS integration; full asynchronous framed deadlines/cancellation/disconnect matrix; workspace_roots/workspace_list/read_multiple_files/search; write/edit/create/move/rename/delete; directory enumeration consistency; hard-link mutation policy.
+- Phase 1 remains IN PROGRESS / NOT ACCEPTED. All 15 production filesystem operations/modes remain unaccepted. Production confinement remains NO-GO.
+- Original dirty checkout C:\Users\Ali\local-mcp-bridge remains untouched; no Production service, ACL migration or real workspace deployment.
+
+## 2026-11-27 follow-up — WORKSPACE_ROOTS transport test
+
+- Added a real message-mode named-pipe harness path for rootless WORKSPACE_ROOTS: REQUEST frame, schema decode, registry rootId-only payload, bounded RESPONSE_HEADER/DATA/END, per-frame ACK and byte-for-byte response verification.
+- Message-pipe transport harness now passes 123 assertions; root registry/request contexts pass 72; REQUEST/ERROR contracts pass 69; directory enumeration passes 39 (plus four optional symlink assertions when privilege permits).
+- The harness remains synchronous and test-only. It does not constitute production dispatch, deadline wiring, identity authorization or Node integration.
+- CI run #67 was green for prior head 78c87be; the WORKSPACE_ROOTS transport changes are local pending commit/push and a new CI run.
+## 2026-11-27 latest superseding state — WORKSPACE_ROOTS transport
+
+- Current PR #20 remote head before this local batch: 78c87be289a4cf5423479bfd6e5670a26a6bae34. PR remains Draft and unmerged.
+- The previously recorded 44 root-registry assertions are superseded: the expanded suite now passes 72 assertions. REQUEST/ERROR contract tests now pass 69 (previously 44/62 in older notes). Directory enumeration passes 39 assertions locally (plus four optional symlink checks if permitted).
+- Added WORKSPACE_ROOTS as a rootless operation code 6. Its request contains no rootId/path; the registry emits only stable IDs in a bounded binary payload, never absolute paths. The request-context opener does not treat this metadata-only operation as a filesystem open.
+- Added message-mode named-pipe coverage for the WORKSPACE_ROOTS request and response. Message-pipe transport tests now pass 123 assertions, including rootless request, root-ID-only payload, bounded response frames and ACKs.
+- All eleven native test commands passed on this Windows x64/MSVC host after these local changes. The current local changes are not yet committed or pushed. The green CI run #67 applies to the earlier remote head 78c87be, not these unpushed changes.
+- Production dispatch, Node/UI integration, root owner/DACL policy, caller identity, asynchronous deadline wiring and all 15 production filesystem operation acceptances remain outstanding. Phase 1 is IN PROGRESS / NOT ACCEPTED; production confinement remains NO-GO.
+## 2026-11-27 latest overlapped ACK/reaper hardening
+
+- Reviewed the heap-owned message reaper and found that its thread called GetOverlappedResult with bWait=FALSE immediately after starting. That could return ERROR_IO_INCOMPLETE and free the OVERLAPPED/buffer/pipe while the kernel still owned the pending I/O.
+- Corrected the reaper to call GetOverlappedResult with bWait=TRUE, so it cannot release resources until the operation reaches a terminal completion.
+- Added a gated regression assertion proving the reaper does not signal completion or release its slot before it is allowed to observe completion.
+- Added a focused response TX/RX integration test: a delayed header ACK completes through the heap-owned overlapped read; the next DATA ACK is withheld, times out under the shared request deadline, transfers pipe/OVERLAPPED/buffer ownership to the reaper, and is drained before cleanup.
+- The overlapped message-mode suite now passes 84 assertions locally (previously 58). This is still test-only; the one-thread-per-timeout reaper is not a production concurrency design.
+'
+[System.IO.File]::AppendAllText((Join-Path (Get-Location) $p), [Environment]::NewLine + $note, $utf8)
+
+$p = 'HANDOFF.md'
+$note = @'
+## 2026-11-27 latest overlapped ACK/reaper correction
+
+- In the real overlapped message-mode test harness, fixed a resource-lifetime race: the heap reaper previously called GetOverlappedResult(..., FALSE) immediately after handoff. If completion was not yet signaled, it could observe ERROR_IO_INCOMPLETE and free memory/pipe HANDLE still owned by the kernel. It now calls GetOverlappedResult(..., TRUE), which waits for terminal completion before cleanup.
+- Added a gate-based regression proving the reaper retains its operation slot and ticket while completion observation is held back.
+- Added focused framed TX/RX coverage: header ACK uses the heap-owned overlapped read and completes normally; DATA ACK is withheld, request deadline expires, operation is transferred to reaper, and resources are released only after terminal cancellation.
+- Local overlapped-message-frame suite now passes 84 assertions (58 prior). Run all thirteen native commands locally before commit; push and poll CI for this change. The reaper remains a one-thread-per-timeout test prototype, not a final IOCP/shared-reaper architecture.
+## 2026-11-27 workspace_list aggregate research
+
+- Added test-only raya_root_registry_list_roots/raya_workspace_list_free. It snapshots configured root IDs/HANDLEs under lock, holds an active registry reference, opens a separate identity-verified directory HANDLE view per root, and enumerates each root independently.
+- Each root returns a bounded first page of up to 64 entries, rootId and relative names only, no absolute paths. A second-page probe determines whether the result is truncated. Per-root failures map to bounded RAYA_ERROR categories and do not stop other roots.
+- Root registry/request-context/workspace_list suite now passes 83 assertions, including two-root results, truncation, per-root failure isolation, cleanup and active-reference release.
+- This is a test-only adapter, not full production workspace_list: no continuation token, framed dispatch, client authentication, Node handler, UI or production ROOTS loading.
+## 2026-11-27 configured-root owner/DACL validation
+
+- Added raya_validate_root_security and raya_root_registry_init_secure to the isolated native research. Security is checked from the already-open root HANDLE: service SID owner, present protected DACL, exactly four inheritable allow ACEs, service/SYSTEM/Administrators full access and authorized client read-only.
+- Rejects extra/unknown trustees (including Everyone), duplicate ACEs, wrong client rights, wrong inheritance flags and default inherited DACLs. Secure registry initialization closes all opened root HANDLEs if any root fails validation.
+- New build-root-security-policy-tests.cmd passes 31 assertions locally. Fixture uses current process user SID as a synthetic service owner and LocalService as synthetic client; it does not prove actual service identity or authenticated pipe peer identity.
+- The CI workflow now includes the root-security policy test. Production client.policy loading and named-pipe client token/session binding remain open.
