@@ -314,8 +314,8 @@ Not yet covered: workspace_roots/workspace_list, read_multiple_files, filename/c
 
 ## 2026-11-27 overlapped message-mode ACK experiment
 
-A separate test harness now applies the monotonic request deadline and per-frame cap to real overlapped message-mode pipe reads. It validates successful framed ACK receipt, a timeout followed by CancelIoEx and terminal completion drain, a second frame constrained by the remaining request budget, ERROR_MORE_DATA and peer disconnect. The test has 27 assertions and is included in the local twelve-command suite.
+A separate test harness now applies the monotonic request deadline and per-frame cap to real overlapped message-mode pipe reads. It validates successful framed ACK receipt, a timeout followed by CancelIoEx and terminal completion drain, a second frame constrained by the remaining request budget, ERROR_MORE_DATA and peer disconnect. The earlier test had 27 assertions; the expanded heap-owned reaper version now has 58 assertions and is included in the local twelve-command suite. It tests per-operation heap ownership, return-with-ticket, terminal cleanup, a four-operation outstanding cap, and rejection of a fifth operation.
 
-This does not complete asynchronous transport: the full response TX/RX loop is still synchronous, and the test helper waits without a deadline after cancellation to preserve stack OVERLAPPED/event/buffer lifetime. Production integration needs heap-owned operation records and a persistent reaper.
+This does not complete asynchronous transport: the full response TX/RX loop is still synchronous, and the test helper waits without a deadline after cancellation to preserve stack OVERLAPPED/event/buffer lifetime. The heap-owned timeout path now transfers operation records to one reaper thread per timed-out operation, with a four-operation cap. Production integration still needs full framed TX/RX wiring and a decision between shared reaper queue and IOCP.
 
 CI run #63 for d74c23c is fully green. The new helper and its CI step are being added in the next isolated commit. Phase 1 remains IN PROGRESS / NOT ACCEPTED.

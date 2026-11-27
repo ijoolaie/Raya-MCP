@@ -43,12 +43,12 @@ All file operations use the same final-component open helper relative to the pin
 - REQUEST/ERROR schema suite: 62 assertions.
 - Configured root registry/request-context suite: 63 assertions.
 - Message-mode framed transport suite: 109 assertions, including one end-to-end READ_FILE path and disconnect checks before header ACK, between DATA frames, during final END ACK, and after END.
-- Overlapped message-mode ACK/deadline suite: 27 assertions for actual framed ACK reads, per-frame/request-wide budget interaction, cancellation drain, ERROR_MORE_DATA and disconnect.
+- Overlapped message-mode ACK/deadline suite: 58 assertions for actual ACK reads, request/per-frame deadlines, heap-owned timeout handoff, terminal reaper cleanup, four-operation cap, ERROR_MORE_DATA and disconnect. The prototype uses one reaper thread per timed-out operation; it is not a shared persistent reaper or IOCP design.
 - All twelve native test commands passed locally on Windows x64/MSVC at the current working state.
 - The local host disallowed symbolic-link creation in some fixtures (ERROR_PRIVILEGE_NOT_HELD 1314); those cases are recorded as SKIP, not PASS. CI must independently exercise them.
 
 ## Not accepted / not implemented
 
-This is not production filesystem confinement. The registry does not validate root owner/DACL or authenticate the caller, and it does not load the application's production ROOTS configuration. The full message-mode frame transport remains synchronous. A separate overlapped message-mode ACK-read test now applies request/per-frame deadlines and drains cancellation safely, but it is not yet a persistent heap-owned reaper and is not integrated into the complete frame/ACK loop.
+This is not production filesystem confinement. The registry does not validate root owner/DACL or authenticate the caller, and it does not load the application's production ROOTS configuration. The full message-mode frame transport remains synchronous. A separate overlapped ACK-read experiment applies request/per-frame deadlines and transfers timed-out I/O to heap-owned per-operation reaper threads, with a four-operation cap. It is not integrated into the complete frame/ACK loop, and the production choice between a shared reaper and IOCP remains open.
 
 Directory enumeration is not a snapshot under concurrent child mutation. No write, edit, move, rename, delete or atomic replacement operation is implemented here. The strict-single-link threat-model decision remains open. No native component in this directory is integrated with Production.

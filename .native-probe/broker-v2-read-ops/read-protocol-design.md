@@ -60,7 +60,7 @@ A request deadline is created once from a monotonic millisecond timestamp. Each 
 
 `deadline-tests.c` has 20 deterministic assertions. The overlapped named-pipe test also performs two pending reads under one 500 ms request deadline and 200 ms per-frame caps: the first read times out and is canceled, the second receives only the remaining budget, and both OVERLAPPED/event/buffer lifetimes remain valid until cancellation completion is observed.
 
-The new overlapped-message-frame-tests.c experiment applies the request/per-frame budget to actual message-mode ACK reads. On timeout it requests cancellation and drains terminal completion before releasing the OVERLAPPED/event/buffer. This is safe but the caller remains blocked until completion; it is not a persistent production reaper and is not yet integrated into the full framed TX/RX loop.
+The overlapped-message-frame-tests.c experiment applies request/per-frame budgets to actual message-mode ACK reads. It tests both synchronous cancellation drain and a heap-owned timeout handoff: on timeout the request transfers the pending OVERLAPPED, event, buffer and pipe HANDLE to a per-operation reaper thread, then returns with a caller-owned completion ticket. The reaper waits for terminal completion before cleanup. A hard cap of four outstanding reaper operations is tested; the fifth is rejected. This is one thread per timed-out operation, not a shared persistent reaper or final IOCP architecture, and is not yet integrated into the full framed TX/RX loop.
 
 ## Implemented test coverage
 
@@ -78,7 +78,7 @@ The new overlapped-message-frame-tests.c experiment applies the request/per-fram
 
 ## Required remaining transport work
 
-1. Move the overlapped message-frame deadline/cancellation helper to heap-owned operation records and a persistent reaper so the request can return without freeing pending I/O resources; then wire it into every framed ACK wait.
+1. Integrate the tested heap-owned per-operation reaper into every framed ACK wait, then compare a shared reaper queue/IOCP design against the current one-thread-per-timeout prototype.
 2. Disconnect behavior is covered in the synchronous frame harness at four major phases and in the overlapped message-read experiment. Add stress/reconnect and cancellation-race coverage to the asynchronous implementation.
 3. Validate asynchronous transport ownership against supported Windows versions.
 4. Map Windows failures to the defined ERROR categories without leaking raw paths or sensitive details.

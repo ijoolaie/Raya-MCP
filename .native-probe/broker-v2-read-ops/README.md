@@ -177,9 +177,9 @@ the final product policy remains an explicit security acceptance question.
 
 ## Overlapped message-mode reads
 
-overlapped-message-frame-tests.c adds a real Windows message-mode pipe experiment with FILE_FLAG_OVERLAPPED. It reads an ACK frame using a single monotonic request deadline and per-frame cap, cancels timed-out reads, and does not release the stack OVERLAPPED/event/buffer until terminal completion is observed. It also covers a delayed successful ACK, a second read using only the remaining shared request budget, ERROR_MORE_DATA from a short message buffer, and peer disconnect. The test is deliberately synchronous at the ownership boundary: timeout cancellation is drained before the helper returns. It is not yet a persistent production reaper or a complete asynchronous frame transport.
+overlapped-message-frame-tests.c adds a real Windows message-mode pipe experiment with FILE_FLAG_OVERLAPPED. It applies one monotonic request deadline and per-frame cap to ACK reads, covers delayed success, deadline sharing, ERROR_MORE_DATA and disconnect, and tests both safe synchronous cancellation drain and heap-owned timeout handoff. On timeout the request transfers the pending OVERLAPPED, event, buffer and pipe HANDLE to a per-operation reaper thread, then returns with a caller-owned completion ticket. The reaper observes terminal completion before closing/freeing resources. The outstanding reaper-operation cap is four; a fifth operation is rejected with ERROR_BUSY. This is a test prototype using one reaper thread per timed-out operation, not a shared persistent reaper or final IOCP architecture, and it is not integrated into the full framed TX/RX loop.
 
-- build-overlapped-message-frame-tests.cmd: 27 assertions for overlapped message-mode ACK reads, deadline sharing, cancellation completion, ERROR_MORE_DATA and disconnect.
+- build-overlapped-message-frame-tests.cmd: 58 assertions for overlapped message-mode ACK reads, heap-owned timeout handoff, reaper cleanup, four-operation cap, deadline sharing, ERROR_MORE_DATA and disconnect.
 ## Test commands
 
 Run from an x64 Native Tools Command Prompt:
@@ -206,7 +206,7 @@ Run from an x64 Native Tools Command Prompt:
 - `build-message-pipe-frame-transport-tests.cmd`: message-mode pipe framing
   experiment (109 assertions), including end-to-end READ_FILE and disconnects at four protocol phases.
 - build-overlapped-message-frame-tests.cmd: overlapped message-mode ACK/deadline
-  experiment (27 assertions).
+  experiment (58 assertions).
 
 ## Not yet established
 
