@@ -5,6 +5,7 @@
 #include "relative-path.h"
 
 #include <string.h>
+#include <stdlib.h>
 #include <wchar.h>
 #include <winternl.h>
 
@@ -406,14 +407,27 @@ BOOL raya_request_context_begin(
     InitializeSRWLock(&context->io_lock);
 
     if (request->operation == RAYA_OPERATION_LIST_DIRECTORY) {
-        if (path_length != 0 &&
-            !raya_open_directory_chain(root, request->relative_path,
-                &context->directory_chain))
+        if (path_length == 0) {
+            HANDLE root_view = NULL;
+            if (!raya_reopen_pinned_directory(root, &root_view))
+                goto fail;
+            context->directory_chain.handles =
+                (HANDLE *)calloc(1, sizeof(HANDLE));
+            if (context->directory_chain.handles == NULL) {
+                DWORD error = ERROR_OUTOFMEMORY;
+                CloseHandle(root_view);
+                SetLastError(error);
+                goto fail;
+            }
+            context->directory_chain.handles[0] = root_view;
+            context->directory_chain.count = 1;
+        } else if (!raya_open_directory_chain(root, request->relative_path,
+                &context->directory_chain)) {
             goto fail;
+        }
 
-        context->directory_handle = context->directory_chain.count == 0
-            ? root
-            : context->directory_chain.handles[context->directory_chain.count - 1];
+        context->directory_handle =
+            context->directory_chain.handles[context->directory_chain.count - 1];
     } else {
         wchar_t parent_path[RAYA_MAX_REQUEST_PATH_CHARS + 1u] = { 0 };
         wchar_t leaf_name[256] = { 0 };

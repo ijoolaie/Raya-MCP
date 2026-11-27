@@ -80,6 +80,80 @@ static HANDLE open_child_directory(RayaNtCreateFileFn nt, HANDLE parent,
     return child;
 }
 
+BOOL raya_reopen_pinned_directory(HANDLE directory, HANDLE *reopened)
+{
+    FILE_ID_INFO original_id;
+    FILE_ID_INFO reopened_id;
+    HANDLE candidate = INVALID_HANDLE_VALUE;
+    wchar_t *path = NULL;
+    DWORD needed;
+    DWORD written;
+    DWORD error;
+
+    if (directory == NULL || directory == INVALID_HANDLE_VALUE ||
+        reopened == NULL || *reopened != NULL ||
+        !validate_directory_handle(directory)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    ZeroMemory(&original_id, sizeof(original_id));
+    ZeroMemory(&reopened_id, sizeof(reopened_id));
+    if (!GetFileInformationByHandleEx(directory, FileIdInfo,
+            &original_id, sizeof(original_id)))
+        return FALSE;
+
+    needed = GetFinalPathNameByHandleW(directory, NULL, 0,
+        FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+    if (needed == 0)
+        return FALSE;
+    path = (wchar_t *)calloc((size_t)needed + 1u, sizeof(wchar_t));
+    if (path == NULL) {
+        SetLastError(ERROR_OUTOFMEMORY);
+        return FALSE;
+    }
+
+    written = GetFinalPathNameByHandleW(directory, path, needed + 1u,
+        FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+    if (written == 0 || written > needed) {
+        error = GetLastError();
+        free(path);
+        SetLastError(error != ERROR_SUCCESS ? error : ERROR_INSUFFICIENT_BUFFER);
+        return FALSE;
+    }
+
+    /* The path is obtained from the already-pinned HANDLE, never from request
+       data. Reopen is accepted only if the resulting HANDLE has the exact same
+       volume serial and 128-bit file ID as the pinned object. */
+    candidate = CreateFileW(path,
+        FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ,
+        NULL, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+        NULL);
+    error = GetLastError();
+    free(path);
+    if (candidate == INVALID_HANDLE_VALUE) {
+        SetLastError(error);
+        return FALSE;
+    }
+
+    if (!validate_directory_handle(candidate) ||
+        !GetFileInformationByHandleEx(candidate, FileIdInfo,
+            &reopened_id, sizeof(reopened_id)) ||
+        original_id.VolumeSerialNumber != reopened_id.VolumeSerialNumber ||
+        memcmp(&original_id.FileId, &reopened_id.FileId,
+            sizeof(original_id.FileId)) != 0) {
+        error = GetLastError();
+        CloseHandle(candidate);
+        SetLastError(error != ERROR_SUCCESS ? error : ERROR_FILE_INVALID);
+        return FALSE;
+    }
+
+    *reopened = candidate;
+    return TRUE;
+}
+
 void raya_close_handle_chain(RAYA_HANDLE_CHAIN *chain)
 {
     if (chain == NULL) return;

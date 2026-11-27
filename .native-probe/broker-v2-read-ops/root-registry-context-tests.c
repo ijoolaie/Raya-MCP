@@ -181,6 +181,11 @@ static void test_list_directory_context(
 {
     raya_request request;
     RAYA_REQUEST_CONTEXT context = { 0 };
+    RAYA_REQUEST_CONTEXT context2 = { 0 };
+    HANDLE root_list_handle1 = NULL;
+    HANDLE root_list_handle2 = NULL;
+    FILE_ID_INFO configured_root_id = { 0 };
+    FILE_ID_INFO list_root_id = { 0 };
     RAYA_DIRECTORY_PAGE page = { 0 };
     BOOL found = FALSE;
 
@@ -190,9 +195,27 @@ static void test_list_directory_context(
 
     CHECK("begin root LIST_DIRECTORY request",
         raya_request_context_begin(registry, &request, 0, &context));
-    CHECK("empty LIST_DIRECTORY path binds to configured root HANDLE",
-        context.directory_handle == context.root_handle &&
-        context.directory_chain.count == 0);
+    root_list_handle1 = context.directory_handle;
+    CHECK("empty LIST_DIRECTORY path receives an independent root HANDLE view",
+        context.directory_handle != context.root_handle &&
+        context.directory_chain.count == 1);
+    CHECK("root listing view preserves configured root file identity",
+        GetFileInformationByHandleEx(context.root_handle, FileIdInfo,
+            &configured_root_id, sizeof(configured_root_id)) &&
+        GetFileInformationByHandleEx(context.directory_handle, FileIdInfo,
+            &list_root_id, sizeof(list_root_id)) &&
+        configured_root_id.VolumeSerialNumber == list_root_id.VolumeSerialNumber &&
+        memcmp(&configured_root_id.FileId, &list_root_id.FileId,
+            sizeof(configured_root_id.FileId)) == 0);
+    CHECK("second root LIST_DIRECTORY request gets a distinct HANDLE",
+        raya_request_context_begin(registry, &request, 0, &context2) &&
+        context2.directory_handle != context.directory_handle &&
+        context2.directory_handle != context.root_handle);
+    root_list_handle2 = context2.directory_handle;
+    CHECK("close second independent root listing context",
+        raya_request_context_close(&context2));
+    CHECK("second root listing HANDLE is closed independently",
+        GetFileType(root_list_handle2) == FILE_TYPE_UNKNOWN);
     CHECK("enumerate configured root through request context",
         raya_enumerate_directory_page(context.directory_handle, 32, TRUE, &page));
     for (size_t i = 0; i < page.count; ++i) {

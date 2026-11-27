@@ -4,6 +4,8 @@ Date: 2026-11-27
 
 ## Current state
 
+The full per-operation status and required evidence are tracked in PHASE1-FILESYSTEM-OPERATION-ACCEPTANCE-MATRIX.md.
+
 **Phase 1: IN PROGRESS / NOT ACCEPTED. Production confinement: NO-GO.**
 
 PR #20 remains Draft and is not merged. PR #19 remains a separate Draft. No Production service, real workspace, production ACL, or production handler was modified. The original dirty checkout at C:\Users\Ali\local-mcp-bridge remains untouched.
@@ -20,7 +22,7 @@ The native research layer now defines five file operations:
 
 REQUEST payload is a 20-byte little-endian fixed header, followed by rootId and UTF-16LE relative path. It carries operation, lengths, reserved-zero field, 64-bit offset, and 32-bit requested length. Both the parser and root-registry context layer validate operation-specific arguments.
 
-All file operations resolve rootId against trusted test configuration, pin parent directories relative to the configured root HANDLE, and open the final file relative to the pinned parent. The same validated file HANDLE is used for content reads and metadata. The per-context SRWLOCK serializes read/metadata calls; the caller must stop and join all context users before closing the context.
+All file operations resolve rootId against trusted test configuration, pin parent directories relative to the configured root HANDLE, and open the final file relative to the pinned parent. The same validated file HANDLE is used for content reads and metadata. The per-context SRWLOCK serializes read/metadata calls; the caller must stop and join all context users before closing the context. Root-level LIST_DIRECTORY now obtains an independent root HANDLE view by reopening the path obtained from the pinned HANDLE and verifying the same volume serial and 128-bit file ID. This prevents concurrent root-list contexts from sharing an enumeration cursor.
 
 ## Overlapped message-mode timeout/reaper experiment
 
@@ -38,8 +40,8 @@ All twelve native build/test commands passed locally on Windows x64/MSVC:
 
 - relative-path gate: 25
 - HANDLE chain/final-file tests: passed; local file-symlink creation unavailable and explicitly skipped
-- directory enumeration: 30
-- configured root/request context: 63
+- directory enumeration: 39
+- configured root/request context: 67
 - I/O lifecycle model: 34
 - deadline arithmetic: 20
 - overlapped pipe cancellation/deadlines: 23

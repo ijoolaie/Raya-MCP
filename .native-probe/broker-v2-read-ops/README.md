@@ -44,6 +44,10 @@ load production configuration, enforce a service SID, or integrate with Node
 handlers. Configured paths are trusted service configuration and must not come
 from request payloads. It is not Production acceptance.
 
+## Phase 1 operation acceptance matrix
+
+See docs/PHASE1-FILESYSTEM-OPERATION-ACCEPTANCE-MATRIX.md for the explicit 15-operation production acceptance matrix, current research evidence and per-operation remaining gates.
+
 ## Read-only operation contracts
 
 See read-only-operation-contracts.md for the 20-byte REQUEST schema and the current READ_FILE, GET_FILE_INFO, READ_FILE_CHUNK, READ_FILE_TAIL and LIST_DIRECTORY research contracts, including their limits and non-acceptance boundaries.
@@ -76,7 +80,7 @@ separate handle-relative open and same-HANDLE revalidation.
 - `ERROR_NO_MORE_FILES` becomes explicit `done=true`.
 - `restart=TRUE` uses `FileIdBothDirectoryRestartInfo` to reset the same handle's
   cursor.
-- The page must be zero-initialized before first use. Always call
+- Each root-level LIST_DIRECTORY context owns its own verified root HANDLE view; nested contexts already own separate component HANDLEs. The page must be zero-initialized before first use. Always call
   `raya_free_directory_page` after use. Serialize enumeration calls on one
   directory HANDLE because its cursor is shared.
 - Enumeration is not a snapshot. On the current NTFS host, creating a new child
@@ -190,9 +194,9 @@ Run from an x64 Native Tools Command Prompt:
   rejection, hard-link detection, active-handle stability after link-count change,
   and directory-junction rejection.
 - `build-directory-enumeration-tests.cmd`: HANDLE-relative multi-page directory
-  enumeration (30 base assertions; four additional if symlink creation is permitted).
+  enumeration (39 assertions; four additional if symlink creation is permitted).
 - `build-root-registry-context-tests.cmd`: configured rootId binding and
-  request-scoped HANDLE lifecycle (63 assertions; one reparse-root assertion is
+  request-scoped HANDLE lifecycle (67 assertions; one reparse-root assertion is
   skipped locally when symlink creation is unavailable).
 - `build-io-lifecycle-model.cmd`: synthetic lifecycle model (34 assertions).
 - `build-deadline-tests.cmd`: request/per-frame deadline arithmetic (20 assertions).

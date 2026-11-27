@@ -69,7 +69,8 @@ BOOL raya_root_registry_close(RAYA_ROOT_REGISTRY *registry);
 /* Resolves request.root_id to a configured pinned root HANDLE, then acquires
    request-scoped directory/file HANDLEs relative to that root. READ_FILE,
    GET_FILE_INFO, READ_FILE_CHUNK and READ_FILE_TAIL open the final regular file;
-   LIST_DIRECTORY pins the requested directory. */
+   LIST_DIRECTORY pins the requested directory. Root-level LIST_DIRECTORY gets
+   an independent root HANDLE view validated by volume serial and file ID. */
 BOOL raya_request_context_begin(
     RAYA_ROOT_REGISTRY *registry,
     const raya_request *request,

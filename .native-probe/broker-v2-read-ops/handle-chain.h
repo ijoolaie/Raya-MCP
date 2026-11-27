@@ -32,6 +32,9 @@ typedef struct RAYA_DIRECTORY_PAGE {
 BOOL raya_open_directory_chain(HANDLE root, const wchar_t *relative_path,
                                RAYA_HANDLE_CHAIN *chain);
 void raya_close_handle_chain(RAYA_HANDLE_CHAIN *chain);
+/* Creates an independent directory HANDLE view of an already pinned directory.
+   The new HANDLE is checked against the same volume/file ID; caller owns it. */
+BOOL raya_reopen_pinned_directory(HANDLE directory, HANDLE *reopened);
 
 /* Enumerates one bounded page using only the supplied already-authorized
    directory HANDLE. Reparse entries are reported as metadata, never traversed.

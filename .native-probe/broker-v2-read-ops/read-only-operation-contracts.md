@@ -33,7 +33,7 @@ All file operations use the same final-component open helper relative to the pin
 
 - Root paths are trusted test configuration; request payloads carry rootId and relative paths only.
 - Root HANDLEs are opened once and retained until registry shutdown.
-- Each request context owns its final file HANDLE and nested directory-chain HANDLEs; the configured root HANDLE is borrowed.
+- Each request context owns its final file HANDLE and nested directory-chain HANDLEs; the configured root HANDLE is borrowed. A root-level LIST_DIRECTORY request obtains a separate root HANDLE view from the path returned by the pinned HANDLE, then verifies exact volume serial and 128-bit file ID before accepting it. This prevents concurrent root-list contexts from sharing the same enumeration cursor.
 - A registry cannot shut down while any request context remains active.
 - Reads and metadata queries on one context are serialized by its SRWLOCK. The caller must stop and join all users of a context before closing/destroying it; the lock is not a substitute for external lifetime ownership.
 - File reads use an explicit offset with NtReadFile and the same already-validated HANDLE. They do not reopen by path.
@@ -41,7 +41,7 @@ All file operations use the same final-component open helper relative to the pin
 ## Local evidence
 
 - REQUEST/ERROR schema suite: 62 assertions.
-- Configured root registry/request-context suite: 63 assertions.
+- Configured root registry/request-context suite: 67 assertions.
 - Message-mode framed transport suite: 109 assertions, including one end-to-end READ_FILE path and disconnect checks before header ACK, between DATA frames, during final END ACK, and after END.
 - Overlapped message-mode ACK/deadline suite: 58 assertions for actual ACK reads, request/per-frame deadlines, heap-owned timeout handoff, terminal reaper cleanup, four-operation cap, ERROR_MORE_DATA and disconnect. The prototype uses one reaper thread per timed-out operation; it is not a shared persistent reaper or IOCP design.
 - All twelve native test commands passed locally on Windows x64/MSVC at the current working state.

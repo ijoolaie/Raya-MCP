@@ -182,6 +182,93 @@ static void test_pagination_and_restart(const wchar_t *root)
     CloseHandle(directory);
 }
 
+static void test_reopened_directory_handle_views(const wchar_t *root)
+{
+    HANDLE original = open_directory_for_enumeration(root);
+    HANDLE first_view = NULL;
+    HANDLE second_view = NULL;
+    FILE_ID_INFO original_id;
+    FILE_ID_INFO first_id;
+    RAYA_DIRECTORY_PAGE first_page = { 0 };
+    size_t first_count = 0;
+    size_t first_remaining = 0;
+    size_t second_total = 0;
+    BOOL first_ok = TRUE;
+    BOOL second_ok = TRUE;
+    BOOL done = FALSE;
+
+    ZeroMemory(&original_id, sizeof(original_id));
+    ZeroMemory(&first_id, sizeof(first_id));
+    CHECK("open original directory for independent HANDLE views",
+        original != INVALID_HANDLE_VALUE);
+    if (original == INVALID_HANDLE_VALUE)
+        return;
+
+    CHECK("create first independent pinned directory view",
+        raya_reopen_pinned_directory(original, &first_view));
+    CHECK("create second independent pinned directory view",
+        raya_reopen_pinned_directory(original, &second_view));
+    if (first_view == NULL || second_view == NULL) {
+        if (first_view != NULL) CloseHandle(first_view);
+        if (second_view != NULL) CloseHandle(second_view);
+        CloseHandle(original);
+        return;
+    }
+
+    CHECK("reopened directory view has a distinct HANDLE",
+        first_view != original && second_view != original &&
+        first_view != second_view);
+    CHECK("reopened directory view preserves exact file identity",
+        GetFileInformationByHandleEx(original, FileIdInfo,
+            &original_id, sizeof(original_id)) &&
+        GetFileInformationByHandleEx(first_view, FileIdInfo,
+            &first_id, sizeof(first_id)) &&
+        original_id.VolumeSerialNumber == first_id.VolumeSerialNumber &&
+        memcmp(&original_id.FileId, &first_id.FileId,
+            sizeof(original_id.FileId)) == 0);
+
+    CHECK("first view returns first bounded enumeration page",
+        raya_enumerate_directory_page(first_view, 1024, TRUE, &first_page));
+    first_count = first_page.count;
+    CHECK("first view page leaves more entries for later",
+        first_count != 0 && !first_page.done);
+    raya_free_directory_page(&first_page);
+
+    while (!done) {
+        RAYA_DIRECTORY_PAGE page = { 0 };
+        if (!raya_enumerate_directory_page(second_view, 1024,
+                second_total == 0, &page)) {
+            second_ok = FALSE;
+            raya_free_directory_page(&page);
+            break;
+        }
+        second_total += page.count;
+        done = page.done;
+        raya_free_directory_page(&page);
+    }
+
+    done = FALSE;
+    while (!done) {
+        RAYA_DIRECTORY_PAGE page = { 0 };
+        if (!raya_enumerate_directory_page(first_view, 1024, FALSE, &page)) {
+            first_ok = FALSE;
+            raya_free_directory_page(&page);
+            break;
+        }
+        first_remaining += page.count;
+        done = page.done;
+        raya_free_directory_page(&page);
+    }
+
+    CHECK("second HANDLE view independently enumerates all entries",
+        second_ok && second_total == FILE_COUNT);
+    CHECK("first HANDLE cursor is unaffected by second HANDLE enumeration",
+        first_ok && first_count + first_remaining == FILE_COUNT);
+
+    CloseHandle(second_view);
+    CloseHandle(first_view);
+    CloseHandle(original);
+}
 static void test_reparse_entry_and_no_traversal(
     const wchar_t *root, const wchar_t *outside)
 {
@@ -361,6 +448,7 @@ int main(void)
 
     printf("DIRECTORY_ENUMERATION_TEST_BEGIN\n");
     test_pagination_and_restart(root);
+    test_reopened_directory_handle_views(root);
     test_reparse_entry_and_no_traversal(root, outside);
     test_directory_handle_pinning(root);
     test_empty_directory(root);
