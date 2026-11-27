@@ -2,7 +2,7 @@
 
 Date: 2026-11-27
 
-Status: prior elevated single-host runtime acceptance passed. The latest commit adds exact root-DACL validation and a deliberately over-broad-DACL negative test; native build and PowerShell syntax checks passed, but that new runtime test still requires an elevated rerun. This is not Production integration and does not complete Phase 1.
+Status: elevated single-host runtime acceptance PASSED for this isolated test candidate, including exact root-DACL allowlist enforcement and rejection of an Everyone Modify ACE. This is not Production integration and does not complete Phase 1.
 
 ## Implemented in this isolated candidate
 
@@ -15,14 +15,19 @@ Status: prior elevated single-host runtime acceptance passed. The latest commit 
 - Validate the same opened regular-file HANDLE for type, reparse status, deletion state, size cap, and `NumberOfLinks == 1` before reading.
 - Protocol accepts only a fixed root ID (`fixture`); no caller-supplied path is accepted. Unsupported operation and absolute-path request cases are rejected.
 - Test-only setup/cleanup scripts create a uniquely named virtual-account service and protected disposable fixture, attempt root-path replacement while the service is running, and verify cleanup.
-- A restricted-token security-negative harness checks write, WRITE_DAC, WRITE_OWNER, FILE_WRITE_ATTRIBUTES, directory add-file/subdirectory, image modification, and hard-link creation denial.
-- The latest setup script also adds a negative test that grants an Everyone Modify ACE to the otherwise protected root and expects the Broker to refuse startup.
+- Restricted-token security-negative harness checks write, WRITE_DAC, WRITE_OWNER, FILE_WRITE_ATTRIBUTES, directory add-file/subdirectory, image modification, and hard-link creation denial.
+- Setup includes a negative test that grants an Everyone Modify ACE to the otherwise protected root and expects the Broker to refuse startup.
 
 ## Elevated validation on 2026-11-27
 
-- Previous revision: MSVC x64 build passed with `/W4 /WX`; service reached Running under the expected virtual service account; positive read, protocol rejection cases, restricted-token ACL/hard-link denials, adversarial root-path replacement, and cleanup all passed.
-- Latest revision: MSVC x64 build passed with `/W4 /WX`; PowerShell setup script syntax parsing and `git diff --check` passed.
-- The newly added exact-DACL runtime check and Everyone Modify rejection test have **not yet been rerun elevated**. Do not treat those new checks as runtime-accepted until the updated `run-elevated-acceptance.ps1` completes.
+- MSVC x64 build passed with `/W4 /WX` for the broker, service-account configurator, and security-negative harness.
+- Disposable Windows service reached Running under the expected virtual service account; process ExitCode was 0.
+- Positive configured-root read passed; unknown root, unsupported operation, and caller-supplied absolute path were rejected.
+- Exact-DACL negative test passed: after an Everyone Modify ACE was added, Broker startup was rejected; after removing it, service startup and read-only requests passed again.
+- Restricted-token checks passed: fixture FILE_WRITE_DATA, WRITE_DAC, WRITE_OWNER, FILE_WRITE_ATTRIBUTES, directory FILE_ADD_FILE, broker image GENERIC_WRITE, and fixture hard-link creation were denied.
+- Adversarial root-path replacement passed in the previous elevated run: while the service retained its root HANDLE, the original root path was renamed and a decoy directory/file was created at the old path; the service continued to return the original fixture content.
+- Runner reported `BROKER_V2_PINNED_ROOT_ACCEPTANCE_PASS` and `BROKER_V2_ACCEPTANCE_TESTS_COMPLETED`.
+- Cleanup verification passed: service absent, broker process count 0, fixture/renamed fixture/image paths absent, and build outputs absent.
 
 ## Limits / not yet validated
 
