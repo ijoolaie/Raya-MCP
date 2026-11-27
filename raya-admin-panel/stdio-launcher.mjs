@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { buildChildEnvironment } from "./child-env.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
@@ -56,11 +57,10 @@ for (let i = 0; i < keys.length; i++) for (let j = i + 1; j < keys.length; j++) 
 }
 const child = spawn(process.execPath, [path.join(root, "server.mjs")], {
   cwd: root,
-  env: {
-    ...process.env,
-    MCP_ALLOWED_ROOTS: roots.join(";"),
-    MCP_ENABLE_POWERSHELL: config.powershellEnabled === true ? "true" : "false"
-  },
+  env: buildChildEnvironment(process.env, {
+    allowedRoots: roots.join(";"),
+    powershellEnabled: config.powershellEnabled === true
+  }),
   stdio: "inherit",
   windowsHide: true,
   shell: false
