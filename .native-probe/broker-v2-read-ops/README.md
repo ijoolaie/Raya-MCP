@@ -1,26 +1,45 @@
-# Broker v2 read-operation foundation
+# Broker v2 relative-path and HANDLE-chain research
 
-Status: research-only, isolated branch. No production handler wiring.
+This directory contains test-only research components. Nothing here is connected to the
+Raya Local MCP production handlers or installed as a persistent service.
 
-## Delivered in this slice
+## Lexical path gate
 
-- A standalone UTF-16 relative-path lexical validator.
-- Rejects rooted and drive-qualified paths, alternate separators, empty components, dot/dot-dot, ADS colons, control characters, Win32 wildcard characters, trailing dot/space, and reserved device names.
-- A standalone test harness with positive nested-path cases and negative traversal/device-name cases.
-- A Windows CI step that builds the helper with MSVC `/W4 /WX` and runs the test harness.
+`relative-path.c` rejects rooted paths, alternate separators, empty components,
+dot components, Win32-invalid characters, trailing dots/spaces, alternate data
+stream syntax, and reserved DOS device names. It is a lexical check only.
 
-## Explicit limitation
+## HANDLE-relative directory chain
 
-This is only the lexical validation gate. It does not open or authorize filesystem objects and is not a confinement boundary. A caller must still traverse one component at a time using `NtCreateFile` relative to the already-pinned parent directory HANDLE, reject reparses, validate each opened object using information queried from that same HANDLE, and keep parent handles alive for the traversal.
+`handle-chain.c` takes a borrowed, already-authorized root directory HANDLE and a
+validated relative directory path. It opens each component individually using
+`NtCreateFile` with the preceding directory HANDLE as `OBJECT_ATTRIBUTES.RootDirectory`.
+Each open requests a directory, uses `OBJ_DONT_REPARSE` and
+`FILE_OPEN_REPARSE_POINT`, and validates directory/reparse/delete-pending state
+through the returned HANDLE. The chain retains every opened directory HANDLE until
+the caller closes it. Intermediate handles are opened with read sharing only so a
+concurrent rename/delete requiring incompatible sharing is denied while the chain
+is retained.
 
-## Next implementation gates
+The root HANDLE is borrowed, must already refer to an authorized directory, and is
+validated again by this helper. The helper does not authorize a caller, choose a
+workspace root, open a final file, or provide a complete file-operation policy.
+It is not yet integrated into Broker v2 or any application handler.
 
-1. Implement and test HANDLE-relative directory traversal with an explicit stack of open directory handles.
-2. Add adversarial directory replacement and reparse-point tests.
-3. Define bounded multi-frame named-pipe response framing; current one-response protocol is insufficient for the existing 256 KiB read contract.
-4. Resolve pending-I/O cancellation lifetime without freeing stack-owned OVERLAPPED state before completion.
-5. Only then implement the four read operations and consider a Node adapter.
+## Tests
 
-## Current product decision
+- `build-and-test.cmd`: MSVC x64 lexical path tests (25 cases).
+- `build-handle-chain-tests.cmd`: MSVC x64 tests for nested HANDLE-relative
+  directory opens, rejection of traversal syntax, blocking a parent rename while
+  the chain is held, and rejection of a directory reparse point.
 
-Do not connect this research component to `server.mjs` or `advanced-tools.mjs`. Do not install a persistent or production service. PR #19 remains a separate test-only Draft.
+The reparse test creates a disposable directory junction using `mklink /J`.
+Failure to create that fixture is reported as a skip; it does not count as a
+successful reparse rejection test.
+
+## Not yet established
+
+This is not production acceptance. Additional work is required for final-component
+file opens, same-HANDLE regular-file validation, hard-link policy, directory
+enumeration, cancellation/overlapped-I/O lifetime, protocol framing, resource
+limits, and adversarial race testing across supported Windows versions.
