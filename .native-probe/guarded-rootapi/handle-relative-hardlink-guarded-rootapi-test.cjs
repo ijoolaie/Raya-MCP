@@ -37,6 +37,19 @@ try {
   fs.linkSync(path.join(outside, "secret.txt"), path.join(root, "alias.txt"));
   assert.equal(fs.statSync(path.join(root, "alias.txt")).nlink, 2);
 
+  // Synchronized check/use race: the native test hook creates a second link
+  // after NumberOfLinks was checked but before ReadFile uses the same HANDLE.
+  fs.writeFileSync(path.join(root, "race-source.txt"), "RACE-WINDOW-CANARY");
+  const raceAlias = path.join(outside, "race-alias.txt");
+  let raceHookRan = false;
+  const raceRead = addon.readChildFromParent(parent, "race-source.txt", 1024, () => {
+    fs.linkSync(path.join(root, "race-source.txt"), raceAlias);
+    raceHookRan = true;
+  });
+  assert.equal(raceHookRan, true);
+  assert.equal(fs.statSync(path.join(root, "race-source.txt")).nlink, 2);
+  assert.equal(raceRead.content.toString(), "RACE-WINDOW-CANARY");
+
   expectPolicyReject("readChildFromParent", () =>
     addon.readChildFromParent(parent, "alias.txt", 1024));
   expectPolicyReject("readTailChildFromParent", () =>
@@ -56,7 +69,9 @@ try {
     tailReadRejected: true,
     metadataRejected: true,
     enumerationRejected: true,
-    policy: "reject regular files unless NumberOfLinks is exactly one"
+    policy: "reject regular files unless NumberOfLinks is exactly one",
+    hardlinkInsertedAfterCheckReadStillReturnedBytes: true,
+    raceFinding: "point-in-time link-count check does not close the check/use race"
   }, null, 2));
 } finally {
   if (parent) {
