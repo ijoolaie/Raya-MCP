@@ -45,7 +45,7 @@ separate handle-relative open and same-HANDLE revalidation.
   directory itself was blocked. Concurrent create/delete/rename can therefore
   change which entries appear across pages; callers must not assume snapshot
   semantics or use returned names as authorization.
-- `build-directory-enumeration-tests.cmd`: 30 assertions over 1,200 files across
+- `build-directory-enumeration-tests.cmd`: 30 base assertions (plus four when`r`n  directory symbolic-link creation is permitted) over 1,200 files across
   multiple pages, no duplicate/omitted names in a stable fixture, restart,
   over-cap failure, empty-directory end, invalid handles, and directory rename
   pinning. Directory symbolic-link creation was explicitly skipped on this host

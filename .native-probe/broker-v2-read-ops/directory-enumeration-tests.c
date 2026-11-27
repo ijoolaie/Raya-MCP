@@ -218,15 +218,28 @@ static void test_reparse_entry_and_no_traversal(
     if (directory == INVALID_HANDLE_VALUE)
         return;
 
-    CHECK("enumerate directory containing reparse entry",
-        raya_enumerate_directory_page(directory, 1024, TRUE, &page));
-    for (size_t i = 0; i < page.count; ++i) {
-        if (wcscmp(page.entries[i].name, L"link-outside") == 0) {
-            found = (page.entries[i].attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+    {
+        BOOL enumeration_ok = TRUE;
+        BOOL done = FALSE;
+        BOOL restart = TRUE;
+        while (!done) {
+            if (!raya_enumerate_directory_page(directory, 1024, restart, &page)) {
+                enumeration_ok = FALSE;
+                raya_free_directory_page(&page);
+                break;
+            }
+            for (size_t i = 0; i < page.count; ++i) {
+                if (wcscmp(page.entries[i].name, L"link-outside") == 0) {
+                    found = (page.entries[i].attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+                }
+            }
+            done = page.done;
+            raya_free_directory_page(&page);
+            restart = FALSE;
         }
+        CHECK("enumerate every page containing possible reparse entry", enumeration_ok);
     }
     CHECK("reparse entry is reported but not followed", found);
-    raya_free_directory_page(&page);
     CloseHandle(directory);
 
     CHECK("outside canary remains present after enumeration",
