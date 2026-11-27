@@ -11,7 +11,7 @@ No operation is Production-accepted by this matrix. All 15 registered production
 
 | # | Production operation/mode | Current native research evidence | Status | Required acceptance work |
 |---:|---|---|---|---|
-| 1 | workspace_roots | Configured root registry binds rootId to pinned root HANDLE; no list-roots request/response yet | Partial | Authenticated client binding; return stable root IDs and only policy-approved display metadata; no raw absolute paths in unauthenticated protocol responses; root owner/DACL validation |
+| 1 | workspace_roots | Test-only WORKSPACE_ROOTS operation (code 6) returns stable root IDs from configured registry; message-mode request/response and ACK path tested; no absolute paths disclosed | Partial | Authenticated client binding; return stable root IDs and only policy-approved display metadata; no raw absolute paths in unauthenticated protocol responses; root owner/DACL validation |
 | 2 | workspace_list | LIST_DIRECTORY can pin one configured root or one nested directory; no aggregate all-roots listing | Partial | Per-root top-level listing, per-root error isolation, bounded entry serialization, stable independent enumeration handles, identity checks |
 | 3 | file_read | READ_FILE opens final regular file relative to pinned parent and reads same validated HANDLE | Research slice exists | Integrate into framed transport; UTF-8/text contract; preserve 256 KiB limit; adversarial replacement/reparse/link tests |
 | 4 | file_read_chunk | READ_FILE_CHUNK validates overflow-safe offset/length and exact in-file range | Research slice exists | Integrate offsetBytes/nextOffsetBytes/totalBytes/done/base64 response semantics; test file mutation and chunk continuity |
@@ -51,3 +51,12 @@ An operation can move from NOT ACCEPTED only when its exact production semantics
 - Windows CI on the supported platform matrix.
 
 This matrix does not authorize Production integration. PR #19 and PR #20 remain Draft until the full Phase 1 gate is met.
+
+## 2026-11-27 evidence update
+
+- workspace_roots remains **Partial**: the rootless WORKSPACE_ROOTS request and bounded rootId-only response now exist in the native protocol/registry test harness. The message-mode pipe harness sends the request and receives the response through RESPONSE_HEADER/DATA/END with ACKs. It returns stable IDs only, not absolute paths. It is not authenticated, does not validate root owner/DACL, and is not wired to production ROOTS or a UI.
+- file_read has a test-only end-to-end synchronous message-pipe vertical slice. The full production async frame transport and caller authorization are not integrated.
+- The overlapped message ACK prototype now has a focused TX/RX path: normal header ACK read, DATA ACK timeout, heap-reaper handoff, and terminal completion cleanup. The reaper now waits with GetOverlappedResult(..., TRUE) before freeing pending resources. This remains a per-timeout thread prototype.
+- Local test counts: root registry/request contexts 72; REQUEST/ERROR contracts 69; message-mode frame transport 123; overlapped message-mode ACK/deadline/reaper 84. All twelve native test commands passed locally on Windows x64/MSVC.
+- Current PR #20 head at time of this note is 4e53bf6231719db35449a965893a8c393ee4886b. CI run #69 (45980705461) is still in progress for preceding code head 4aae5b6348d8f8d3e18346296899da57d542ee9b; docs-only head may have a separate CI run.
+- No operation has crossed the Production acceptance rule. All 15 registered production operations/modes remain NOT ACCEPTED; Phase 1 remains IN PROGRESS / NOT ACCEPTED.
