@@ -18,8 +18,39 @@ Each open requests a directory, uses `OBJ_DONT_REPARSE` and
 `FILE_OPEN_REPARSE_POINT`, and validates directory/reparse/delete-pending state
 through the returned HANDLE. The chain retains every opened directory HANDLE until
 the caller closes it. Intermediate handles are opened with read sharing only so a
-concurrent rename/delete or child creation requiring incompatible access is denied
-while the chain is retained.
+concurrent rename/delete requiring incompatible access is denied while the chain
+is retained.
+
+## HANDLE-relative directory enumeration
+
+`raya_enumerate_directory_page` enumerates one 64 KiB page from an already-open
+directory HANDLE using `GetFileInformationByHandleEx(FileIdBothDirectoryInfo)`.
+It validates each record's offset, alignment, filename length, supported leaf-name
+policy, and nonnegative size metadata before returning any entries. It returns
+bounded metadata and names only; it does not open or traverse listed directories.
+Reparse entries are reported by attributes and must not be traversed without a
+separate handle-relative open and same-HANDLE revalidation.
+
+- Entry cap: 1..1024 per returned page. If the OS page contains more entries than
+  requested, it fails explicitly with `ERROR_MORE_DATA`; the cursor may have
+  advanced, so the caller must restart on the same handle with a larger cap.
+- `ERROR_NO_MORE_FILES` becomes explicit `done=true`.
+- `restart=TRUE` uses `FileIdBothDirectoryRestartInfo` to reset the same handle's
+  cursor.
+- The page must be zero-initialized before first use. Always call
+  `raya_free_directory_page` after use. Serialize enumeration calls on one
+  directory HANDLE because its cursor is shared.
+- Enumeration is not a snapshot. On the current NTFS host, creating a new child
+  succeeded while the directory HANDLE was open, even though renaming the
+  directory itself was blocked. Concurrent create/delete/rename can therefore
+  change which entries appear across pages; callers must not assume snapshot
+  semantics or use returned names as authorization.
+- `build-directory-enumeration-tests.cmd`: 30 assertions over 1,200 files across
+  multiple pages, no duplicate/omitted names in a stable fixture, restart,
+  over-cap failure, empty-directory end, invalid handles, and directory rename
+  pinning. Directory symbolic-link creation was explicitly skipped on this host
+  because Windows returned ERROR_PRIVILEGE_NOT_HELD (1314); reparse-entry
+  reporting is therefore not claimed as runtime-verified by this test.
 
 ## Final regular-file open
 
@@ -40,8 +71,8 @@ the final product policy remains an explicit security acceptance question.
 
 The root HANDLE is borrowed, must already refer to an authorized directory, and is
 validated again by the helper. The helper does not authorize a caller, choose a
-workspace root, enumerate a directory, or provide a complete file-operation policy.
-It is not yet integrated into Broker v2 or any application handler.
+workspace root, or provide a complete file-operation policy. It is not yet
+integrated into Broker v2 or any application handler.
 
 ## I/O cancellation and reaper experiments
 
@@ -104,6 +135,8 @@ Run from an x64 Native Tools Command Prompt:
   traversal rejection, rename blocking, final-file open, size cap, directory
   rejection, hard-link detection, active-handle stability after link-count change,
   and directory-junction rejection.
+- `build-directory-enumeration-tests.cmd`: HANDLE-relative multi-page directory
+  enumeration (30 assertions).
 - `build-io-lifecycle-model.cmd`: synthetic lifecycle model (34 assertions).
 - `build-overlapped-pipe-lifetime-tests.cmd`: actual named-pipe cancellation
   experiment (17 assertions).
@@ -117,8 +150,8 @@ Run from an x64 Native Tools Command Prompt:
 ## Not yet established
 
 This is not production acceptance. Additional work is required for bounded transport
-deadlines, REQUEST/ERROR contract, directory enumeration, resource limits, broader
-adversarial race testing across supported Windows versions, and a decision on the
-residual hard-link mutation behavior described above. None of the native I/O or
-frame-codec experiments is integrated into the Broker service or Raya Local MCP
-handlers.
+deadlines, REQUEST/ERROR contract, directory enumeration consistency under
+concurrent mutation, resource limits, broader adversarial race testing across
+supported Windows versions, and a decision on the residual hard-link mutation
+behavior described above. None of the native I/O or frame-codec experiments is
+integrated into the Broker service or Raya Local MCP handlers.
