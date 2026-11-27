@@ -50,6 +50,12 @@ It is not yet integrated into Broker v2 or any application handler.
   directory opens, traversal rejection, rename blocking, final-file open,
   size cap, directory rejection, hard-link detection, active-handle stability
   after link-count change, and directory-junction rejection.
+- `build-io-lifecycle-model.cmd`: MSVC x64 pure state-machine tests for
+  synchronous/pending completion, cancellation races, late completion,
+  exactly-once reaping, unresolved-operation retention, shutdown admission, and
+  bounded active-operation count. Current result: 34 passed, 0 failed.
+- The I/O lifecycle tests are synthetic and do not issue real named-pipe I/O,
+  call CancelIoEx, or prove Windows driver cancellation behavior.
 - File symbolic-link creation is attempted when Windows policy permits it;
   otherwise the test reports an explicit skip. Directory junction creation is
   independently tested.
@@ -61,12 +67,15 @@ It is not yet integrated into Broker v2 or any application handler.
 - `cancellation-lifecycle-design.md` defines the proposed OVERLAPPED/buffer/HANDLE
   lifetime invariants, cancellation state machine, bounded admission, shutdown
   behavior, and deterministic tests. It is a design proposal, not an implementation.
+- `io-lifecycle-model.c` is a synthetic executable model of the state transitions.
+  It does not own actual Windows handles or OVERLAPPED structures.
 - Frame codec work remains gated on review and deterministic testing of the
   cancellation ownership model. The two concerns must not be conflated.
 
 ## Not yet established
 
 This is not production acceptance. Additional work is required for directory
-enumeration, response framing, cancellation/overlapped-I/O lifetime, resource
-limits, broader adversarial race testing across supported Windows versions, and
-a decision on the residual hard-link mutation behavior described above.
+enumeration, response framing, actual overlapped-I/O ownership and cancellation
+testing, resource limits, broader adversarial race testing across supported
+Windows versions, and a decision on the residual hard-link mutation behavior
+described above.
