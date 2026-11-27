@@ -277,6 +277,7 @@ static void test_disconnect_between_frames(void)
 
 static void test_request_error_roundtrip_over_message_pipe(void);
 static void test_end_to_end_read_only_request_over_message_pipe(void);
+static void test_disconnect_at_protocol_phases(void);
 int main(void)
 {
     printf("MESSAGE_PIPE_FRAME_TRANSPORT_TEST_BEGIN\n");
@@ -286,6 +287,7 @@ int main(void)
     test_disconnect_between_frames();
     test_request_error_roundtrip_over_message_pipe();
     test_end_to_end_read_only_request_over_message_pipe();
+    test_disconnect_at_protocol_phases();
 
     printf("MESSAGE_PIPE_FRAME_TRANSPORT: %u passed, %u failed\n",
         passed, failed);
@@ -390,6 +392,7 @@ done:
     CloseHandle(client);
     CloseHandle(server);
 }
+
 
 static void test_end_to_end_read_only_request_over_message_pipe(void)
 {
@@ -549,6 +552,7 @@ static void test_end_to_end_read_only_request_over_message_pipe(void)
             frame_data_length = remaining < tx.chunk_size ? remaining : tx.chunk_size;
             frame_data = file_data + tx.sent_bytes;
         }
+
         BOOL built = raya_response_tx_next(&tx, frame_data, frame_data_length, &outgoing);
         CHECK("build next bounded response frame", built);
         if (!built)
@@ -650,4 +654,168 @@ cleanup:
         DeleteFileW(file_path);
         RemoveDirectoryW(root_path);
     }
+}
+
+static BOOL send_response_frame_and_optionally_ack(
+    HANDLE server,
+    HANDLE client,
+    raya_response_tx *tx,
+    raya_response_rx *rx,
+    const uint8_t *body,
+    BOOL acknowledge)
+{
+    raya_frame_view outgoing;
+    raya_frame_view incoming;
+    raya_frame_view ack;
+    uint8_t wire[RAYA_FRAME_WIRE_CAPACITY];
+    uint8_t incoming_wire[RAYA_FRAME_WIRE_CAPACITY];
+    uint8_t ack_wire[RAYA_FRAME_HEADER_SIZE + 4u];
+    size_t wire_length = 0;
+    size_t ack_length = 0;
+    DWORD received = 0;
+    DWORD io_error = ERROR_SUCCESS;
+    const uint8_t *frame_data = NULL;
+    uint32_t frame_data_length = 0;
+
+    if (tx->header_sent && tx->sent_bytes < tx->total_bytes) {
+        uint32_t remaining = tx->total_bytes - tx->sent_bytes;
+        frame_data_length = remaining < tx->chunk_size ? remaining : tx->chunk_size;
+        frame_data = body + tx->sent_bytes;
+    }
+
+    if (!raya_response_tx_next(tx, frame_data, frame_data_length, &outgoing) ||
+        !raya_frame_encode(&outgoing, wire, sizeof(wire), &wire_length) ||
+        !write_message(server, wire, (DWORD)wire_length) ||
+        !read_message(client, incoming_wire, sizeof(incoming_wire), &received, &io_error) ||
+        !raya_frame_decode(incoming_wire, received, &incoming) ||
+        !raya_response_rx_accept(rx, &incoming))
+        return FALSE;
+
+    if (!acknowledge)
+        return TRUE;
+
+    if (!raya_response_rx_make_ack(rx, &ack) ||
+        !raya_frame_encode(&ack, ack_wire, sizeof(ack_wire), &ack_length) ||
+        !write_message(client, ack_wire, (DWORD)ack_length) ||
+        !read_message(server, incoming_wire, sizeof(incoming_wire), &received, &io_error) ||
+        !raya_frame_decode(incoming_wire, received, &incoming) ||
+        !raya_response_tx_accept_ack(tx, &incoming))
+        return FALSE;
+
+    return TRUE;
+}
+
+static BOOL is_pipe_disconnect_error(DWORD error)
+{
+    return error == ERROR_BROKEN_PIPE ||
+        error == ERROR_PIPE_NOT_CONNECTED ||
+        error == ERROR_NO_DATA;
+}
+
+static void test_disconnect_at_protocol_phases(void)
+{
+    HANDLE server = INVALID_HANDLE_VALUE;
+    HANDLE client = INVALID_HANDLE_VALUE;
+    raya_response_tx tx;
+    raya_response_rx rx;
+    uint8_t body[8] = { 'a','b','c','d','e','f','g','h' };
+    uint8_t buffer[RAYA_FRAME_WIRE_CAPACITY];
+    DWORD received = 0;
+    DWORD error = ERROR_SUCCESS;
+    raya_frame_view frame;
+
+    /* Disconnect after RESPONSE_HEADER but before its ACK. */
+    BOOL created = create_message_pipe_pair(&server, &client, 9);
+    CHECK("create pipe for disconnect before header ACK", created);
+    if (!created)
+        goto between_data;
+    CHECK("initialize zero-byte response for header-ACK disconnect",
+        raya_response_tx_init(&tx, 0, 1));
+    raya_response_rx_init(&rx);
+    CHECK("send header then stop before ACK",
+        send_response_frame_and_optionally_ack(server, client, &tx, &rx, NULL, FALSE));
+    CloseHandle(client);
+    client = INVALID_HANDLE_VALUE;
+    BOOL header_ack_read = read_message(server, buffer, sizeof(buffer), &received, &error);
+    CHECK("disconnect before header ACK is detected",
+        !header_ack_read && is_pipe_disconnect_error(error));
+    CloseHandle(server);
+    server = INVALID_HANDLE_VALUE;
+
+between_data:
+    /* Disconnect after the first DATA ACK, before acknowledging the second DATA. */
+    created = create_message_pipe_pair(&server, &client, 10);
+    CHECK("create pipe for disconnect between DATA frames", created);
+    if (!created)
+        goto final_ack;
+    CHECK("initialize two-chunk response for DATA disconnect",
+        raya_response_tx_init(&tx, sizeof(body), 4));
+    raya_response_rx_init(&rx);
+    CHECK("send and ACK response header",
+        send_response_frame_and_optionally_ack(server, client, &tx, &rx, body, TRUE));
+    CHECK("send and ACK first DATA frame",
+        send_response_frame_and_optionally_ack(server, client, &tx, &rx, body, TRUE));
+    CHECK("send second DATA frame without ACK",
+        send_response_frame_and_optionally_ack(server, client, &tx, &rx, body, FALSE));
+    CloseHandle(client);
+    client = INVALID_HANDLE_VALUE;
+    error = ERROR_SUCCESS;
+    BOOL data_ack_read = read_message(server, buffer, sizeof(buffer), &received, &error);
+    CHECK("disconnect between DATA frames is detected",
+        !data_ack_read && is_pipe_disconnect_error(error));
+    CloseHandle(server);
+    server = INVALID_HANDLE_VALUE;
+
+final_ack:
+    /* Disconnect after receiving END but before sending its final ACK. */
+    created = create_message_pipe_pair(&server, &client, 11);
+    CHECK("create pipe for disconnect during final ACK", created);
+    if (!created)
+        goto after_end;
+    CHECK("initialize one-chunk response for final-ACK disconnect",
+        raya_response_tx_init(&tx, 4, 4));
+    raya_response_rx_init(&rx);
+    CHECK("send and ACK final-ACK test header",
+        send_response_frame_and_optionally_ack(server, client, &tx, &rx, body, TRUE));
+    CHECK("send and ACK final-ACK test DATA",
+        send_response_frame_and_optionally_ack(server, client, &tx, &rx, body, TRUE));
+    CHECK("send END then disconnect before its ACK",
+        send_response_frame_and_optionally_ack(server, client, &tx, &rx, body, FALSE));
+    CloseHandle(client);
+    client = INVALID_HANDLE_VALUE;
+    error = ERROR_SUCCESS;
+    BOOL end_ack_read = read_message(server, buffer, sizeof(buffer), &received, &error);
+    CHECK("disconnect during final END ACK is detected",
+        !end_ack_read && is_pipe_disconnect_error(error));
+    CloseHandle(server);
+    server = INVALID_HANDLE_VALUE;
+
+after_end:
+    /* A completed END ACK is terminal; the sender must not emit another frame. */
+    created = create_message_pipe_pair(&server, &client, 12);
+    CHECK("create pipe for disconnect after END", created);
+    if (!created)
+        goto cleanup;
+    CHECK("initialize zero-byte terminal response",
+        raya_response_tx_init(&tx, 0, 1));
+    raya_response_rx_init(&rx);
+    CHECK("send and ACK terminal response header",
+        send_response_frame_and_optionally_ack(server, client, &tx, &rx, NULL, TRUE));
+    CHECK("send and ACK terminal END",
+        send_response_frame_and_optionally_ack(server, client, &tx, &rx, NULL, TRUE));
+    CHECK("END ACK leaves both state machines terminal", tx.complete && rx.ended);
+    CHECK("sender rejects any frame after terminal END",
+        !raya_response_tx_next(&tx, NULL, 0, &frame));
+    CloseHandle(client);
+    client = INVALID_HANDLE_VALUE;
+    error = ERROR_SUCCESS;
+    BOOL peeked = PeekNamedPipe(server, buffer, sizeof(buffer), &received, NULL, NULL);
+    CHECK("disconnect after END is observable without another response",
+        !peeked && is_pipe_disconnect_error(GetLastError()));
+
+cleanup:
+    if (client != INVALID_HANDLE_VALUE)
+        CloseHandle(client);
+    if (server != INVALID_HANDLE_VALUE)
+        CloseHandle(server);
 }

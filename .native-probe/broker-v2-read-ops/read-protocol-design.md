@@ -64,11 +64,11 @@ The deadline arithmetic is not yet wired into the synchronous message-mode frame
 
 - `read-frame-tests.c`: 57 pure C assertions for byte layout, malformed frames, size boundaries, the 16-frame ceiling, ACK validation, sequencing and END.
 - `request-error-tests.c`: 44 assertions for REQUEST and ERROR schemas, rootId syntax, UTF-16/path validation, reserved fields, malformed payloads, error-code bounds, and terminal ERROR ACK.
-- message-pipe-frame-transport-tests.c: 86 assertions using real Windows
+- message-pipe-frame-transport-tests.c: 109 assertions using real Windows
   message-mode named pipes. Full transfers cover zero bytes, chunk-plus-one, and
   exactly 256 KiB. REQUEST and terminal ERROR are sent over the pipe with an ACK.
   A deliberately short read returns ERROR_MORE_DATA; a truncated frame is
-  rejected; disconnect between frames fails closed. An end-to-end READ_FILE test
+  rejected; disconnect before header ACK, between DATA frames, during final END ACK, and after END fails closed. An end-to-end READ_FILE test
   sends a REQUEST, resolves the configured rootId, acquires a request context,
   reads the file, and transfers RESPONSE_HEADER/DATA/END with ACK for each frame.
 - `overlapped-pipe-lifetime-tests.c`: 23 assertions for pending cancellation, normal completion, cancel/completion race, late cancellation, and request-wide/per-frame deadline interaction with actual overlapped pipe reads.

@@ -155,7 +155,7 @@ the final product policy remains an explicit security acceptance question.
 - `build-request-error-tests.cmd`: 44 assertions for REQUEST/ERROR payload
   contracts, rootId syntax, relative path and UTF-16 validation, reserved fields,
   frame sequencing, error-code bounds, and terminal ERROR acknowledgement.
-- build-message-pipe-frame-transport-tests.cmd: 86 actual Windows message-mode
+- build-message-pipe-frame-transport-tests.cmd: 109 actual Windows message-mode
   pipe assertions. It transfers zero bytes, chunk-plus-one, and exactly 256 KiB
   through one-message-per-frame with an ACK for each frame; exercises REQUEST and
   terminal ERROR over the pipe; and runs an end-to-end READ_FILE request through
@@ -191,7 +191,7 @@ Run from an x64 Native Tools Command Prompt:
   machine (57 assertions).
 - `build-request-error-tests.cmd`: REQUEST/ERROR payload contracts (44 assertions).
 - `build-message-pipe-frame-transport-tests.cmd`: message-mode pipe framing
-  experiment (86 assertions).
+  experiment (109 assertions).
 
 ## Not yet established
 
