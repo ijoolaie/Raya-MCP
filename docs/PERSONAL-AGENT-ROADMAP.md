@@ -20,7 +20,11 @@ Keep Raya MCP as the local capability/control plane. Add a separately permission
 - The local checkout has uncommitted changes on `security/hardlink-alias-policy-probe`. Preserve them; do not reset, stash, overwrite, or mix them into this feature branch.
 - Phase 1 filesystem confinement is explicitly **IN PROGRESS / NOT ACCEPTED**. The isolated native prototypes are test-only and are not approved for production integration. Path-based production handlers still have unresolved race/TOCTOU risk.
 - PowerShell execution is disabled by default. When enabled it runs with the Windows account's privileges and is not a sandbox.
-- Dependency remediation is now present on `main` after PR #8; the Windows CI dependency-audit step passed. Dependabot alert #1 still requires a direct GitHub Security status check before it can be declared closed.
+- Dependency remediation is now present on `main` after PR #8; PR #9 records the remediation and CI evidence. Dependabot alert #1 still requires a direct GitHub Security status check before it can be declared closed.
+- PR #10 merged on 2026-11-27 and restricts the Admin Panel Tunnel Client child-process environment to required Windows runtime variables plus the explicit `CONTROL_PLANE_API_KEY`; this is Bridge hardening, not filesystem-confinement acceptance.
+- PR #11 extracted the hard-link and live ACL-denial probes from the superseded stacked PR #2. On 2026-11-27, both native addons compiled and both isolated NTFS tests passed on one Windows x64 / Node.js 22.23.2 host. This remains one-host research evidence only; ReFS/SMB/removable/cloud providers and other operation families remain untested.
+- PR #7 was closed without merge because its root-level Admin Panel and pre-modular architecture conflicted with the current package layout. Its useful environment-isolation work is in PR #10; current curation rules are in merged PR #12.
+- PR #2 and PR #6 were closed without merge because they were stacked on the closed PR #1 and contained superseded/mixed baselines; PR #11 preserves only the narrow NTFS research assets.
 
 ## Target architecture
 
