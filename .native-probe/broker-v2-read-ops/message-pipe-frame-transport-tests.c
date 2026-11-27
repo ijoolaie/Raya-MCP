@@ -524,9 +524,8 @@ static void test_end_to_end_read_only_request_over_message_pipe(void)
     if (!context_open)
         goto cleanup;
 
-    BOOL file_read = context.file_handle != NULL &&
-        ReadFile(context.file_handle, file_data, sizeof(file_data),
-            &file_bytes, NULL) &&
+    BOOL file_read = raya_request_context_read(&context, file_data,
+        sizeof(file_data), &file_bytes) &&
         file_bytes == sizeof(expected) - 1 &&
         memcmp(file_data, expected, sizeof(expected) - 1) == 0;
     CHECK("request context reads selected file HANDLE", file_read);

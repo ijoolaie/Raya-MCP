@@ -19,6 +19,11 @@ static uint32_t read_u32_le(const uint8_t *p)
         ((uint32_t)p[3] << 24);
 }
 
+static uint64_t read_u64_le(const uint8_t *p)
+{
+    return (uint64_t)read_u32_le(p) |
+        ((uint64_t)read_u32_le(p + 4) << 32);
+}
 static void write_u16_le(uint8_t *p, uint16_t value)
 {
     p[0] = (uint8_t)(value & 0xffu);
@@ -33,6 +38,11 @@ static void write_u32_le(uint8_t *p, uint32_t value)
     p[3] = (uint8_t)((value >> 24) & 0xffu);
 }
 
+static void write_u64_le(uint8_t *p, uint64_t value)
+{
+    write_u32_le(p, (uint32_t)value);
+    write_u32_le(p + 4, (uint32_t)(value >> 32));
+}
 static bool response_bounds_valid(uint32_t total_bytes, uint32_t chunk_size)
 {
     uint32_t data_frames;
@@ -282,10 +292,28 @@ bool raya_response_rx_make_ack(
 
 static bool operation_valid(uint16_t operation)
 {
-    return operation == RAYA_OPERATION_READ_FILE ||
-        operation == RAYA_OPERATION_LIST_DIRECTORY;
+    return operation >= RAYA_OPERATION_READ_FILE &&
+        operation <= RAYA_OPERATION_READ_FILE_TAIL;
 }
 
+static bool request_arguments_valid(
+    uint16_t operation, uint64_t offset, uint32_t length)
+{
+    switch (operation) {
+    case RAYA_OPERATION_READ_FILE:
+    case RAYA_OPERATION_LIST_DIRECTORY:
+    case RAYA_OPERATION_GET_FILE_INFO:
+        return offset == 0 && length == 0;
+    case RAYA_OPERATION_READ_FILE_CHUNK:
+        return length != 0 && length <= RAYA_MAX_RESPONSE_BYTES &&
+            offset <= UINT64_MAX - (uint64_t)length;
+    case RAYA_OPERATION_READ_FILE_TAIL:
+        return offset == 0 && length != 0 &&
+            length <= RAYA_MAX_RESPONSE_BYTES;
+    default:
+        return false;
+    }
+}
 static bool error_code_valid(uint32_t code)
 {
     return code >= RAYA_ERROR_BAD_REQUEST && code <= RAYA_ERROR_INTERNAL;
@@ -374,7 +402,8 @@ bool raya_request_encode_payload(
         !root_id_valid(request->root_id, root_length))
         return false;
 
-    if (request->operation == RAYA_OPERATION_READ_FILE && path_length == 0)
+    if ((request->operation != RAYA_OPERATION_LIST_DIRECTORY && path_length == 0) ||
+        !request_arguments_valid(request->operation, request->offset, request->length))
         return false;
     if (path_length != 0 &&
         !utf16_path_valid(request->relative_path, path_length))
@@ -388,6 +417,8 @@ bool raya_request_encode_payload(
     write_u16_le(payload + 2, (uint16_t)root_length);
     write_u16_le(payload + 4, (uint16_t)path_length);
     write_u16_le(payload + 6, 0);
+    write_u64_le(payload + 8, request->offset);
+    write_u32_le(payload + 16, request->length);
     memcpy(payload + RAYA_REQUEST_FIXED_BYTES, request->root_id, root_length);
 
     for (size_t i = 0; i < path_length; ++i)
@@ -406,6 +437,8 @@ bool raya_request_decode_frame(
     uint16_t operation;
     uint16_t root_length;
     uint16_t path_length;
+    uint64_t offset;
+    uint32_t request_length;
     size_t expected_length;
     const uint8_t *payload;
 
@@ -422,10 +455,13 @@ bool raya_request_decode_frame(
     operation = read_u16_le(payload);
     root_length = read_u16_le(payload + 2);
     path_length = read_u16_le(payload + 4);
+    offset = read_u64_le(payload + 8);
+    request_length = read_u32_le(payload + 16);
 
     if (!operation_valid(operation) || read_u16_le(payload + 6) != 0 ||
         root_length == 0 || root_length > RAYA_MAX_ROOT_ID_BYTES ||
-        path_length > RAYA_MAX_REQUEST_PATH_CHARS)
+        path_length > RAYA_MAX_REQUEST_PATH_CHARS ||
+        !request_arguments_valid(operation, offset, request_length))
         return false;
 
     expected_length = RAYA_REQUEST_FIXED_BYTES + (size_t)root_length +
@@ -435,6 +471,8 @@ bool raya_request_decode_frame(
 
     memset(&candidate, 0, sizeof(candidate));
     candidate.operation = operation;
+    candidate.offset = offset;
+    candidate.length = request_length;
     memcpy(candidate.root_id, payload + RAYA_REQUEST_FIXED_BYTES, root_length);
     candidate.root_id[root_length] = '\0';
     if (!root_id_valid(candidate.root_id, root_length))
@@ -447,7 +485,7 @@ bool raya_request_decode_frame(
     }
     candidate.relative_path[path_length] = L'\0';
 
-    if (operation == RAYA_OPERATION_READ_FILE && path_length == 0)
+    if (operation != RAYA_OPERATION_LIST_DIRECTORY && path_length == 0)
         return false;
     if (path_length != 0 &&
         !utf16_path_valid(candidate.relative_path, path_length))

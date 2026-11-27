@@ -28,7 +28,7 @@ stream syntax, and reserved DOS device names. It is a lexical check only.
 - Active request contexts hold a registry reference. Shutdown returns ERROR_BUSY
   until all contexts close. A context closes its file and directory-chain HANDLEs
   before releasing the registry reference.
-- `build-root-registry-context-tests.cmd`: 44 assertions for two-root binding,
+- `build-root-registry-context-tests.cmd`: 63 assertions for two-root binding,
   read/list dispatch, root-level and nested file opens, unknown root rejection,
   invalid paths, size cap, directory-vs-file rejection, context close/double-close,
   shutdown while active, root namespace pinning, and atomic invalid-config rejection.
@@ -39,6 +39,10 @@ This module does not validate root owner/DACL policy, authenticate the caller,
 load production configuration, enforce a service SID, or integrate with Node
 handlers. Configured paths are trusted service configuration and must not come
 from request payloads. It is not Production acceptance.
+
+## Read-only operation contracts
+
+See read-only-operation-contracts.md for the 20-byte REQUEST schema and the current READ_FILE, GET_FILE_INFO, READ_FILE_CHUNK, READ_FILE_TAIL and LIST_DIRECTORY research contracts, including their limits and non-acceptance boundaries.
 
 ## HANDLE-relative directory chain
 
@@ -135,10 +139,10 @@ the final product policy remains an explicit security acceptance question.
   little-endian field encoding; no packed-struct casts or untrusted pointer casts.
 - The decoder rejects bad magic/version/type, truncated headers/payloads, trailing
   bytes, and payloads above 16 KiB.
-- REQUEST payload: 8-byte fixed header (operation u16, rootId length u16, UTF-16
-  path code-unit length u16, reserved u16=0), followed by a 1..64-byte ASCII rootId
-  and relative UTF-16LE path. RootId syntax is [A-Za-z0-9_-]. READ_FILE requires
-  a nonempty relative path; LIST_DIRECTORY may use an empty path to list the root.
+- REQUEST payload: 20-byte fixed header (operation u16, rootId length u16, UTF-16
+  path code-unit length u16, reserved u16=0, offset u64 LE, length u32 LE), followed by a 1..64-byte ASCII rootId
+  and relative UTF-16LE path. RootId syntax is [A-Za-z0-9_-]. All file operations require
+  a nonempty relative path; LIST_DIRECTORY may use an empty path to list the root. READ_FILE and GET_FILE_INFO require zero offset/length; READ_FILE_CHUNK requires a nonzero bounded length and checked 64-bit offset; READ_FILE_TAIL requires a nonzero bounded length and zero offset.
   The parser validates UTF-16 surrogate pairs and delegates path syntax to the
   relative-path gate.
 - ERROR payload: numeric code u32, retryable u8, three reserved zero bytes. Codes
@@ -152,7 +156,7 @@ the final product policy remains an explicit security acceptance question.
   chunks must have the exact expected size, including the final short chunk.
 - `build-read-frame-tests.cmd`: 57 pure C assertions for wire layout, malformed
   frames, response boundaries, ACK validation and response sequencing.
-- `build-request-error-tests.cmd`: 44 assertions for REQUEST/ERROR payload
+- `build-request-error-tests.cmd`: 62 assertions for REQUEST/ERROR payload
   contracts, rootId syntax, relative path and UTF-16 validation, reserved fields,
   frame sequencing, error-code bounds, and terminal ERROR acknowledgement.
 - build-message-pipe-frame-transport-tests.cmd: 109 actual Windows message-mode
@@ -179,7 +183,7 @@ Run from an x64 Native Tools Command Prompt:
 - `build-directory-enumeration-tests.cmd`: HANDLE-relative multi-page directory
   enumeration (30 base assertions; four additional if symlink creation is permitted).
 - `build-root-registry-context-tests.cmd`: configured rootId binding and
-  request-scoped HANDLE lifecycle (44 assertions; one reparse-root assertion is
+  request-scoped HANDLE lifecycle (63 assertions; one reparse-root assertion is
   skipped locally when symlink creation is unavailable).
 - `build-io-lifecycle-model.cmd`: synthetic lifecycle model (34 assertions).
 - `build-deadline-tests.cmd`: request/per-frame deadline arithmetic (20 assertions).
@@ -189,9 +193,9 @@ Run from an x64 Native Tools Command Prompt:
   experiment (42 assertions).
 - `build-read-frame-tests.cmd`: bounded read-frame codec and response state
   machine (57 assertions).
-- `build-request-error-tests.cmd`: REQUEST/ERROR payload contracts (44 assertions).
+- `build-request-error-tests.cmd`: REQUEST/ERROR payload contracts (62 assertions), including five read-only operation schemas and offset/length bounds.
 - `build-message-pipe-frame-transport-tests.cmd`: message-mode pipe framing
-  experiment (109 assertions).
+  experiment (109 assertions), including end-to-end READ_FILE and disconnects at four protocol phases.
 
 ## Not yet established
 

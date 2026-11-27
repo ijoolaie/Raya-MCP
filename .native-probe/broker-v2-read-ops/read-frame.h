@@ -12,7 +12,7 @@
 #define RAYA_MAX_DATA_FRAMES 16u
 #define RAYA_FRAME_WIRE_CAPACITY (RAYA_FRAME_HEADER_SIZE + RAYA_MAX_FRAME_PAYLOAD)
 #define RAYA_MAX_ROOT_ID_BYTES 64u
-#define RAYA_REQUEST_FIXED_BYTES 8u
+#define RAYA_REQUEST_FIXED_BYTES 20u
 #define RAYA_MAX_REQUEST_PATH_CHARS ((RAYA_MAX_FRAME_PAYLOAD - RAYA_REQUEST_FIXED_BYTES - RAYA_MAX_ROOT_ID_BYTES) / 2u)
 
 typedef enum raya_frame_type {
@@ -26,7 +26,10 @@ typedef enum raya_frame_type {
 
 typedef enum raya_operation {
     RAYA_OPERATION_READ_FILE = 1,
-    RAYA_OPERATION_LIST_DIRECTORY = 2
+    RAYA_OPERATION_LIST_DIRECTORY = 2,
+    RAYA_OPERATION_GET_FILE_INFO = 3,
+    RAYA_OPERATION_READ_FILE_CHUNK = 4,
+    RAYA_OPERATION_READ_FILE_TAIL = 5
 } raya_operation;
 
 typedef enum raya_error_code {
@@ -50,6 +53,8 @@ typedef struct raya_request {
     uint16_t operation;
     char root_id[RAYA_MAX_ROOT_ID_BYTES + 1u];
     wchar_t relative_path[RAYA_MAX_REQUEST_PATH_CHARS + 1u];
+    uint64_t offset;
+    uint32_t length;
 } raya_request;
 
 typedef struct raya_error_info {

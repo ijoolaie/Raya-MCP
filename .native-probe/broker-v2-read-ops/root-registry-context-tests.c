@@ -39,9 +39,8 @@ static BOOL read_context_file(RAYA_REQUEST_CONTEXT *context,
     DWORD read_bytes = 0;
     DWORD expected_length = (DWORD)strlen(expected);
 
-    return context->file_handle != NULL &&
-        ReadFile(context->file_handle, buffer, sizeof(buffer) - 1,
-            &read_bytes, NULL) &&
+    return raya_request_context_read(context, buffer, sizeof(buffer) - 1,
+            &read_bytes) &&
         read_bytes == expected_length &&
         memcmp(buffer, expected, expected_length) == 0;
 }
@@ -229,6 +228,102 @@ static void test_list_directory_context(
     CHECK("close nested list request", raya_request_context_close(&context));
 }
 
+
+static void test_chunk_tail_and_file_info(RAYA_ROOT_REGISTRY *registry)
+{
+    raya_request request;
+    RAYA_REQUEST_CONTEXT context = { 0 };
+    char buffer[64] = { 0 };
+    DWORD bytes = 0;
+    RAYA_FILE_INFO info;
+
+    memset(&request, 0, sizeof(request));
+    request.operation = RAYA_OPERATION_READ_FILE_CHUNK;
+    strcpy_s(request.root_id, sizeof(request.root_id), "fixture");
+    wcscpy_s(request.relative_path,
+        RAYA_MAX_REQUEST_PATH_CHARS + 1u, L"docs\\file.txt");
+    request.offset = 2;
+    request.length = 3;
+    CHECK("begin READ_FILE_CHUNK request",
+        raya_request_context_begin(registry, &request, 1024, &context));
+    CHECK("READ_FILE_CHUNK returns exact requested range",
+        raya_request_context_read(&context, buffer, sizeof(buffer), &bytes) &&
+        bytes == 3 && memcmp(buffer, "ot-", 3) == 0);
+    CHECK("close READ_FILE_CHUNK context",
+        raya_request_context_close(&context));
+
+    memset(&request, 0, sizeof(request));
+    request.operation = RAYA_OPERATION_READ_FILE_TAIL;
+    strcpy_s(request.root_id, sizeof(request.root_id), "fixture");
+    wcscpy_s(request.relative_path,
+        RAYA_MAX_REQUEST_PATH_CHARS + 1u, L"docs\\file.txt");
+    request.length = 4;
+    memset(&context, 0, sizeof(context));
+    memset(buffer, 0, sizeof(buffer));
+    CHECK("begin READ_FILE_TAIL request",
+        raya_request_context_begin(registry, &request, 1024, &context));
+    CHECK("READ_FILE_TAIL returns last four bytes",
+        raya_request_context_read(&context, buffer, sizeof(buffer), &bytes) &&
+        bytes == 4 && memcmp(buffer, "-one", 4) == 0);
+    CHECK("close READ_FILE_TAIL context",
+        raya_request_context_close(&context));
+
+    request.length = 20;
+    memset(&context, 0, sizeof(context));
+    memset(buffer, 0, sizeof(buffer));
+    CHECK("begin READ_FILE_TAIL larger than file",
+        raya_request_context_begin(registry, &request, 1024, &context));
+    CHECK("READ_FILE_TAIL clamps to complete small file",
+        raya_request_context_read(&context, buffer, sizeof(buffer), &bytes) &&
+        bytes == 8 && memcmp(buffer, "root-one", 8) == 0);
+    CHECK("close large-tail context",
+        raya_request_context_close(&context));
+
+    memset(&request, 0, sizeof(request));
+    request.operation = RAYA_OPERATION_GET_FILE_INFO;
+    strcpy_s(request.root_id, sizeof(request.root_id), "fixture");
+    wcscpy_s(request.relative_path,
+        RAYA_MAX_REQUEST_PATH_CHARS + 1u, L"docs\\file.txt");
+    memset(&context, 0, sizeof(context));
+    CHECK("begin GET_FILE_INFO request",
+        raya_request_context_begin(registry, &request, 1024, &context));
+    CHECK("GET_FILE_INFO reads metadata from same validated HANDLE",
+        raya_request_context_get_file_info(&context, &info) &&
+        info.size == 8 && info.link_count == 1 &&
+        !info.directory && !info.reparse_point && !info.delete_pending);
+    CHECK("GET_FILE_INFO does not expose file content read",
+        !raya_request_context_read(&context, buffer, sizeof(buffer), &bytes));
+    CHECK("close GET_FILE_INFO context",
+        raya_request_context_close(&context));
+
+    memset(&request, 0, sizeof(request));
+    request.operation = RAYA_OPERATION_READ_FILE_CHUNK;
+    strcpy_s(request.root_id, sizeof(request.root_id), "fixture");
+    wcscpy_s(request.relative_path,
+        RAYA_MAX_REQUEST_PATH_CHARS + 1u, L"docs\\file.txt");
+    request.offset = 7;
+    request.length = 2;
+    memset(&context, 0, sizeof(context));
+    CHECK("out-of-range READ_FILE_CHUNK is rejected before context is returned",
+        !raya_request_context_begin(registry, &request, 1024, &context) &&
+        GetLastError() == ERROR_HANDLE_EOF && registry->active_contexts == 0);
+
+    memset(&request, 0, sizeof(request));
+    request.operation = RAYA_OPERATION_READ_FILE;
+    strcpy_s(request.root_id, sizeof(request.root_id), "fixture");
+    wcscpy_s(request.relative_path,
+        RAYA_MAX_REQUEST_PATH_CHARS + 1u, L"docs\\file.txt");
+    memset(&context, 0, sizeof(context));
+    CHECK("begin READ_FILE for small-buffer test",
+        raya_request_context_begin(registry, &request, 1024, &context));
+    CHECK("READ_FILE rejects insufficient output buffer",
+        !raya_request_context_read(&context, buffer, 4, &bytes) &&
+        GetLastError() == ERROR_INSUFFICIENT_BUFFER);
+    CHECK("close small-buffer context",
+        raya_request_context_close(&context));
+}
+
+
 static void test_invalid_requests_and_registry_close(
     RAYA_ROOT_REGISTRY *registry,
     const wchar_t *root_one)
@@ -260,6 +355,20 @@ static void test_invalid_requests_and_registry_close(
     request.operation = RAYA_OPERATION_READ_FILE;
     request.relative_path[0] = L'\0';
     CHECK("READ_FILE rejects empty relative path",
+        !raya_request_context_begin(registry, &request, 1024, &context));
+
+    request.operation = RAYA_OPERATION_READ_FILE_CHUNK;
+    wcscpy_s(request.relative_path,
+        RAYA_MAX_REQUEST_PATH_CHARS + 1u, L"docs\\file.txt");
+    request.offset = 0;
+    request.length = 0;
+    CHECK("request context rejects zero-length READ_FILE_CHUNK",
+        !raya_request_context_begin(registry, &request, 1024, &context));
+
+    request.operation = RAYA_OPERATION_READ_FILE_TAIL;
+    request.offset = 1;
+    request.length = 1;
+    CHECK("request context rejects nonzero READ_FILE_TAIL offset",
         !raya_request_context_begin(registry, &request, 1024, &context));
 
     request.operation = 99;
@@ -394,6 +503,7 @@ int main(void)
 
     test_read_and_root_mapping(&registry);
     test_list_directory_context(&registry);
+    test_chunk_tail_and_file_info(&registry);
     test_invalid_requests_and_registry_close(&registry, root_one);
     test_invalid_registry_configs(root_one);
     test_reparse_root_rejection(root_one);

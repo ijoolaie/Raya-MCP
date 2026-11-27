@@ -6,7 +6,19 @@
 
 #include <string.h>
 #include <wchar.h>
+#include <winternl.h>
 
+typedef NTSTATUS (NTAPI *RayaNtReadFileFn)(
+    HANDLE, HANDLE, PIO_APC_ROUTINE, PVOID, PIO_STATUS_BLOCK,
+    PVOID, ULONG, PLARGE_INTEGER, PULONG);
+
+static RayaNtReadFileFn get_nt_read_file(void)
+{
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    return ntdll
+        ? (RayaNtReadFileFn)GetProcAddress(ntdll, "NtReadFile")
+        : NULL;
+}
 static size_t bounded_root_id_length(const char *value)
 {
     size_t length = 0;
@@ -58,6 +70,35 @@ static BOOL request_path_utf16_valid(const wchar_t *path, size_t length)
         }
     }
     return TRUE;
+}
+static BOOL request_file_operation(uint16_t operation)
+{
+    return operation == RAYA_OPERATION_READ_FILE ||
+        operation == RAYA_OPERATION_GET_FILE_INFO ||
+        operation == RAYA_OPERATION_READ_FILE_CHUNK ||
+        operation == RAYA_OPERATION_READ_FILE_TAIL;
+}
+
+static BOOL request_arguments_valid(const raya_request *request)
+{
+    if (request == NULL)
+        return FALSE;
+
+    switch (request->operation) {
+    case RAYA_OPERATION_READ_FILE:
+    case RAYA_OPERATION_LIST_DIRECTORY:
+    case RAYA_OPERATION_GET_FILE_INFO:
+        return request->offset == 0 && request->length == 0;
+    case RAYA_OPERATION_READ_FILE_CHUNK:
+        return request->length != 0 &&
+            request->length <= RAYA_MAX_RESPONSE_BYTES &&
+            request->offset <= UINT64_MAX - (uint64_t)request->length;
+    case RAYA_OPERATION_READ_FILE_TAIL:
+        return request->offset == 0 && request->length != 0 &&
+            request->length <= RAYA_MAX_RESPONSE_BYTES;
+    default:
+        return FALSE;
+    }
 }
 static BOOL configured_path_is_absolute(const wchar_t *path)
 {
@@ -308,17 +349,22 @@ BOOL raya_request_context_begin(
         return FALSE;
     }
 
-    if (request->operation == RAYA_OPERATION_READ_FILE) {
-        if (path_length == 0 ||
-            !raya_validate_relative_path(request->relative_path, &components) ||
-            components == 0) {
-            SetLastError(ERROR_INVALID_NAME);
-            return FALSE;
-        }
-    } else if (request->operation == RAYA_OPERATION_LIST_DIRECTORY) {
+    if (!request_arguments_valid(request)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    if (request->operation == RAYA_OPERATION_LIST_DIRECTORY) {
         if (path_length != 0 &&
             (!raya_validate_relative_path(request->relative_path, &components) ||
              components == 0)) {
+            SetLastError(ERROR_INVALID_NAME);
+            return FALSE;
+        }
+    } else if (request_file_operation(request->operation)) {
+        if (path_length == 0 ||
+            !raya_validate_relative_path(request->relative_path, &components) ||
+            components == 0) {
             SetLastError(ERROR_INVALID_NAME);
             return FALSE;
         }
@@ -355,6 +401,9 @@ BOOL raya_request_context_begin(
     context->registry = registry;
     context->root_handle = root;
     context->operation = request->operation;
+    context->offset = request->offset;
+    context->length = request->length;
+    InitializeSRWLock(&context->io_lock);
 
     if (request->operation == RAYA_OPERATION_LIST_DIRECTORY) {
         if (path_length != 0 &&
@@ -386,6 +435,17 @@ BOOL raya_request_context_begin(
                 maximum_file_size, &context->file_handle, &context->file_size))
             goto fail;
 
+        if (request->operation == RAYA_OPERATION_READ_FILE &&
+            context->file_size > RAYA_MAX_RESPONSE_BYTES) {
+            SetLastError(ERROR_FILE_TOO_LARGE);
+            goto fail;
+        }
+        if (request->operation == RAYA_OPERATION_READ_FILE_CHUNK &&
+            (context->offset > context->file_size ||
+             (ULONGLONG)context->length > context->file_size - context->offset)) {
+            SetLastError(ERROR_HANDLE_EOF);
+            goto fail;
+        }
         context->directory_handle = parent;
     }
 
@@ -404,6 +464,145 @@ fail:
     return FALSE;
 }
 
+BOOL raya_request_context_read(
+    RAYA_REQUEST_CONTEXT *context,
+    void *buffer,
+    size_t buffer_capacity,
+    DWORD *bytes_read)
+{
+    ULONGLONG offset = 0;
+    DWORD requested = 0;
+    LARGE_INTEGER position;
+    DWORD actual = 0;
+
+    if (bytes_read != NULL)
+        *bytes_read = 0;
+    if (context == NULL || !context->active ||
+        context->file_handle == NULL || context->file_handle == INVALID_HANDLE_VALUE ||
+        bytes_read == NULL) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    switch (context->operation) {
+    case RAYA_OPERATION_READ_FILE:
+        offset = 0;
+        if (context->file_size > RAYA_MAX_RESPONSE_BYTES) {
+            SetLastError(ERROR_FILE_TOO_LARGE);
+            return FALSE;
+        }
+        requested = (DWORD)context->file_size;
+        break;
+    case RAYA_OPERATION_READ_FILE_CHUNK:
+        offset = context->offset;
+        requested = context->length;
+        if (offset > context->file_size ||
+            (ULONGLONG)requested > context->file_size - offset) {
+            SetLastError(ERROR_HANDLE_EOF);
+            return FALSE;
+        }
+        break;
+    case RAYA_OPERATION_READ_FILE_TAIL:
+        requested = context->length;
+        if ((ULONGLONG)requested > context->file_size)
+            requested = (DWORD)context->file_size;
+        offset = context->file_size - requested;
+        break;
+    default:
+        SetLastError(ERROR_NOT_SUPPORTED);
+        return FALSE;
+    }
+
+    if (requested > RAYA_MAX_RESPONSE_BYTES ||
+        (size_t)requested > buffer_capacity ||
+        (requested != 0 && buffer == NULL)) {
+        SetLastError(requested > buffer_capacity
+            ? ERROR_INSUFFICIENT_BUFFER
+            : ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+
+    AcquireSRWLockExclusive(&context->io_lock);
+    if (requested != 0) {
+        RayaNtReadFileFn nt_read = get_nt_read_file();
+        IO_STATUS_BLOCK io;
+        NTSTATUS status;
+        position.QuadPart = (LONGLONG)offset;
+        if (nt_read == NULL) {
+            ReleaseSRWLockExclusive(&context->io_lock);
+            SetLastError(ERROR_PROC_NOT_FOUND);
+            return FALSE;
+        }
+
+        status = nt_read(context->file_handle, NULL, NULL, NULL, &io,
+            buffer, requested, &position, NULL);
+        if (status < 0) {
+            ReleaseSRWLockExclusive(&context->io_lock);
+            SetLastError(ERROR_READ_FAULT);
+            return FALSE;
+        }
+        actual = (DWORD)io.Information;
+        if (actual != requested) {
+            ReleaseSRWLockExclusive(&context->io_lock);
+            SetLastError(ERROR_HANDLE_EOF);
+            return FALSE;
+        }
+    }
+
+    ReleaseSRWLockExclusive(&context->io_lock);
+    *bytes_read = actual;
+    return TRUE;
+}
+
+BOOL raya_request_context_get_file_info(
+    RAYA_REQUEST_CONTEXT *context,
+    RAYA_FILE_INFO *info)
+{
+    FILE_STANDARD_INFO standard_info;
+    FILE_BASIC_INFO basic_info;
+    FILE_ATTRIBUTE_TAG_INFO tag_info;
+    DWORD error = ERROR_SUCCESS;
+
+    if (context == NULL || !context->active ||
+        context->operation != RAYA_OPERATION_GET_FILE_INFO ||
+        context->file_handle == NULL ||
+        context->file_handle == INVALID_HANDLE_VALUE || info == NULL) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    AcquireSRWLockExclusive(&context->io_lock);
+    if (!GetFileInformationByHandleEx(context->file_handle,
+            FileStandardInfo, &standard_info, sizeof(standard_info)) ||
+        !GetFileInformationByHandleEx(context->file_handle,
+            FileBasicInfo, &basic_info, sizeof(basic_info)) ||
+        !GetFileInformationByHandleEx(context->file_handle,
+            FileAttributeTagInfo, &tag_info, sizeof(tag_info))) {
+        error = GetLastError();
+        ReleaseSRWLockExclusive(&context->io_lock);
+        SetLastError(error);
+        return FALSE;
+    }
+
+    memset(info, 0, sizeof(*info));
+    info->size = (ULONGLONG)standard_info.EndOfFile.QuadPart;
+    info->link_count = standard_info.NumberOfLinks;
+    info->attributes = tag_info.FileAttributes;
+    info->creation_time.dwLowDateTime = (DWORD)basic_info.CreationTime.QuadPart;
+    info->creation_time.dwHighDateTime = (DWORD)((ULONGLONG)basic_info.CreationTime.QuadPart >> 32);
+    info->last_access_time.dwLowDateTime = (DWORD)basic_info.LastAccessTime.QuadPart;
+    info->last_access_time.dwHighDateTime = (DWORD)((ULONGLONG)basic_info.LastAccessTime.QuadPart >> 32);
+    info->last_write_time.dwLowDateTime = (DWORD)basic_info.LastWriteTime.QuadPart;
+    info->last_write_time.dwHighDateTime = (DWORD)((ULONGLONG)basic_info.LastWriteTime.QuadPart >> 32);
+    info->directory = standard_info.Directory != FALSE;
+    info->delete_pending = standard_info.DeletePending != FALSE;
+    info->reparse_point =
+        (tag_info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+
+    ReleaseSRWLockExclusive(&context->io_lock);
+    return TRUE;
+}
 BOOL raya_request_context_close(RAYA_REQUEST_CONTEXT *context)
 {
     RAYA_ROOT_REGISTRY *registry;
@@ -414,11 +613,18 @@ BOOL raya_request_context_close(RAYA_REQUEST_CONTEXT *context)
     }
 
     registry = context->registry;
+    AcquireSRWLockExclusive(&context->io_lock);
     if (context->file_handle != NULL &&
         context->file_handle != INVALID_HANDLE_VALUE) {
-        if (!CloseHandle(context->file_handle))
+        if (!CloseHandle(context->file_handle)) {
+            DWORD error = GetLastError();
+            ReleaseSRWLockExclusive(&context->io_lock);
+            SetLastError(error);
             return FALSE; /* Keep context and registry reference for a safe retry. */
+        }
     }
+    context->file_handle = NULL;
+    ReleaseSRWLockExclusive(&context->io_lock);
 
     raya_close_handle_chain(&context->directory_chain);
     context->file_handle = NULL;

@@ -30,13 +30,28 @@ typedef struct RAYA_ROOT_REGISTRY {
     bool closing;
 } RAYA_ROOT_REGISTRY;
 
+typedef struct RAYA_FILE_INFO {
+    ULONGLONG size;
+    ULONGLONG link_count;
+    DWORD attributes;
+    FILETIME creation_time;
+    FILETIME last_access_time;
+    FILETIME last_write_time;
+    bool directory;
+    bool reparse_point;
+    bool delete_pending;
+} RAYA_FILE_INFO;
+
 typedef struct RAYA_REQUEST_CONTEXT {
     RAYA_ROOT_REGISTRY *registry;
     HANDLE root_handle;       /* Borrowed from registry while active. */
     HANDLE directory_handle;  /* Borrowed root or last HANDLE in directory_chain. */
-    HANDLE file_handle;       /* Owned by this context for READ_FILE. */
+    HANDLE file_handle;       /* Owned by this context for file operations. */
     ULONGLONG file_size;
+    uint64_t offset;
+    uint32_t length;
     uint16_t operation;
+    SRWLOCK io_lock;
     RAYA_HANDLE_CHAIN directory_chain;
     bool active;
 } RAYA_REQUEST_CONTEXT;
@@ -52,15 +67,32 @@ BOOL raya_root_registry_init(
 BOOL raya_root_registry_close(RAYA_ROOT_REGISTRY *registry);
 
 /* Resolves request.root_id to a configured pinned root HANDLE, then acquires
-   request-scoped directory/file HANDLEs relative to that root. READ_FILE opens
-   the final regular file; LIST_DIRECTORY pins the requested directory. */
+   request-scoped directory/file HANDLEs relative to that root. READ_FILE,
+   GET_FILE_INFO, READ_FILE_CHUNK and READ_FILE_TAIL open the final regular file;
+   LIST_DIRECTORY pins the requested directory. */
 BOOL raya_request_context_begin(
     RAYA_ROOT_REGISTRY *registry,
     const raya_request *request,
     ULONGLONG maximum_file_size,
     RAYA_REQUEST_CONTEXT *context);
 
-/* Closes owned file/chain HANDLEs and releases the registry active-context ref. */
+/* Reads READ_FILE, READ_FILE_CHUNK or READ_FILE_TAIL using the same validated
+   file HANDLE. The request's range is checked against the opened file size and
+   the 256 KiB response limit. Calls on one context are serialized. */
+BOOL raya_request_context_read(
+    RAYA_REQUEST_CONTEXT *context,
+    void *buffer,
+    size_t buffer_capacity,
+    DWORD *bytes_read);
+
+/* Returns metadata queried from the same validated file HANDLE. */
+BOOL raya_request_context_get_file_info(
+    RAYA_REQUEST_CONTEXT *context,
+    RAYA_FILE_INFO *info);
+
+/* Closes owned file/chain HANDLEs and releases the registry active-context ref.
+   The caller must stop and join all users of this context before close; the
+   per-context lock serializes read/metadata calls, not context destruction. */
 BOOL raya_request_context_close(RAYA_REQUEST_CONTEXT *context);
 
 #endif

@@ -19,15 +19,17 @@ Frame types are REQUEST, RESPONSE_HEADER, DATA, END, ERROR, and ACK. The codec r
 
 ## REQUEST payload
 
-The fixed eight-byte header contains:
-- operation code (u16 LE): READ_FILE=1 or LIST_DIRECTORY=2;
+The fixed 20-byte header contains:
+- operation code (u16 LE): READ_FILE=1, LIST_DIRECTORY=2, GET_FILE_INFO=3, READ_FILE_CHUNK=4, READ_FILE_TAIL=5;
 - rootId length in bytes (u16 LE);
 - relative-path length in UTF-16 code units (u16 LE);
-- reserved field (u16 LE), required to be zero.
+- reserved field (u16 LE), required to be zero;
+- byte offset (u64 LE);
+- requested length (u32 LE).
 
-It is followed by a 1..64 byte ASCII rootId using only letters, digits, underscore, and hyphen, then the relative path as UTF-16LE. The whole payload must fit in the 16 KiB frame limit. READ_FILE requires a nonempty path; LIST_DIRECTORY may use an empty path to enumerate the configured root. UTF-16 surrogate pairs are validated and nonempty paths pass the standalone relative-path validator. REQUEST must be sequence zero.
+It is followed by a 1..64 byte ASCII rootId using only letters, digits, underscore, and hyphen, then the relative path as UTF-16LE. The whole payload must fit in the 16 KiB frame limit. File operations require a nonempty path; LIST_DIRECTORY may use an empty path to enumerate the configured root. READ_FILE and GET_FILE_INFO require zero offset/length. READ_FILE_CHUNK requires a nonzero length <=256 KiB and an overflow-safe offset+length. READ_FILE_TAIL requires offset zero and a nonzero length <=256 KiB. UTF-16 surrogate pairs are validated and nonempty paths pass the standalone relative-path validator. REQUEST must be sequence zero.
 
-This parser only validates syntax. It does not map rootId to configured ROOTS, authorize a caller, or acquire a request-scoped root HANDLE. Those remain separate security gates.
+The parser validates schema and syntax. The separate test-only root registry maps rootId to configured roots and acquires request-scoped HANDLEs; it does not authenticate callers or validate production root owner/DACL.
 
 ## ERROR payload
 
@@ -77,7 +79,7 @@ The deadline arithmetic is not yet wired into the synchronous message-mode frame
 ## Required remaining transport work
 
 1. Wire the request/per-frame deadline budget into actual asynchronous message-frame reads and ACK waits, using the tested cancellation/reaper ownership model.
-2. Test disconnect before header ACK, between chunks, during final ACK, and after END.
+2. Disconnect behavior is now covered before header ACK, between DATA frames, during final END ACK, and after END. Add stress/reconnect and cancellation-race coverage to the async implementation.
 3. Validate asynchronous transport ownership against supported Windows versions.
 4. Map Windows failures to the defined ERROR categories without leaking raw paths or sensitive details.
 5. Bind rootId to configured ROOTS and enforce request-scoped HANDLE lifetime before filesystem dispatch.
@@ -86,9 +88,9 @@ The deadline arithmetic is not yet wired into the synchronous message-mode frame
 
 `root-registry.c/.h` adds a test-only binding layer. Service configuration supplies 1..8 absolute `rootId -> path` entries. The registry validates the rootId grammar and uniqueness, opens each configured root once with `FILE_FLAG_OPEN_REPARSE_POINT`, checks the returned HANDLE for disk-directory/non-reparse/non-delete-pending state, and retains it until registry shutdown.
 
-A decoded READ_FILE request resolves rootId, opens the parent directory chain relative to the retained root HANDLE, then opens the final regular file relative to that pinned parent. LIST_DIRECTORY resolves the rootId and pins the requested directory; an empty relative path means the configured root. Every request holds an active registry reference. Registry shutdown returns `ERROR_BUSY` until all request contexts close. A context closes its owned file and directory-chain HANDLEs before releasing the reference.
+A decoded file request resolves rootId, opens the parent directory chain relative to the retained root HANDLE, then opens the final regular file relative to that pinned parent. READ_FILE, GET_FILE_INFO, READ_FILE_CHUNK and READ_FILE_TAIL all operate on the same validated final-file HANDLE. READ_FILE_CHUNK uses an exact in-file byte range; READ_FILE_TAIL returns up to the requested final bytes; GET_FILE_INFO reads metadata from the same HANDLE. LIST_DIRECTORY resolves the rootId and pins the requested directory; an empty relative path means the configured root. Every request holds an active registry reference. Registry shutdown returns `ERROR_BUSY` until all request contexts close. A context closes its owned file and directory-chain HANDLEs before releasing the reference.
 
-The 44-assertion test covers two distinct configured roots, rootId selection, root-level and nested reads, root and nested directory listing, unknown roots, invalid paths, file size caps, directory-as-file rejection, context cleanup, active-context shutdown refusal, root namespace pinning, and invalid/duplicate configuration. Configured-root symbolic-link creation is skipped locally when privilege is unavailable; CI runs the reparse-root rejection case.
+The 65-assertion test covers two distinct configured roots, rootId selection, READ_FILE, LIST_DIRECTORY, GET_FILE_INFO, READ_FILE_CHUNK and READ_FILE_TAIL, root-level and nested paths, invalid ranges, size caps, directory-as-file rejection, context cleanup, active-context shutdown refusal, root namespace pinning, and invalid/duplicate configuration. Configured-root symbolic-link creation is skipped locally when privilege is unavailable; CI runs the reparse-root rejection case.
 
 This is not a production root registry. It does not validate root owner/DACL, authenticate the client, load the actual application ROOTS configuration, or integrate with Node handlers. The configured paths are trusted test configuration, not request input.
 ## Relationship to filesystem security
