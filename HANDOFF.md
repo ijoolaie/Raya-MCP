@@ -1100,3 +1100,56 @@ A later status check found a local uncommitted modification in `.native-probe/ha
 
 Phase 1 filesystem confinement remains IN PROGRESS / NOT ACCEPTED. The native HANDLE-relative work remains isolated test/probe code and is not integrated into Production handlers. Production filesystem confinement is not established as race-free; Production integration remains NO-GO.
 
+
+## 2026-11-27 latest continuation handoff — Phase 1 / PR #19 and #20
+
+### Current PRs and worktrees
+- PR #19: Draft, separate test-only pinned-root Broker v2 slice; worktree C:\Users\Ali\Raya-Local-MCP-staging-20261126\broker-v2-ipc-acceptance-20261127.
+- PR #20: Draft, not merged; branch research/broker-v2-read-ops-foundation-20261127; worktree C:\Users\Ali\Raya-Local-MCP-staging-20261126\broker-v2-read-ops-research-20261127; latest head ae0ea46126b4daee5d62e8ea2d5fafb94acabae5.
+- Original dirty checkout C:\Users\Ali\local-mcp-bridge remains untouched. No production service, production ACL migration or workspace deployment was performed.
+
+### PR #20 current research components
+1. UTF-16 relative-path lexical gate (25 tests).
+2. HANDLE-relative nested directory chain and same-HANDLE final regular-file open.
+3. Multi-page HANDLE-relative directory enumeration (30 base assertions; 4 more when symlink creation is permitted).
+4. Configured root registry and request-scoped HANDLE context (44 assertions). Service config supplies rootId/path pairs; READ_FILE and LIST_DIRECTORY use only relative paths; active contexts prevent registry shutdown.
+5. Synthetic I/O lifecycle state model (34 assertions).
+6. Monotonic request/per-frame deadline arithmetic (20 assertions).
+7. Actual overlapped named-pipe cancellation and shared request/per-frame deadline reads (23 assertions).
+8. Heap-owned four-operation reaper experiment (42 assertions).
+9. RYA2 frame codec/response TX/RX sequencing (57 assertions).
+10. REQUEST/ERROR payload schema (44 assertions).
+11. Message-mode pipe frame transport, including REQUEST/ERROR (28 assertions).
+
+All eleven native commands passed locally on Windows x64 / MSVC. File/directory/configured-root symbolic-link creation is skipped locally when the environment returns ERROR_PRIVILEGE_NOT_HELD (1314). The CI runner has exercised directory reparse creation; latest CI run #59 is pending for the new root-registry test.
+
+### Important unresolved findings
+- NumberOfLinks == 1 is a point-in-time observation. Windows permits a new hard link after the check while the file HANDLE remains open. This remains an explicit security acceptance question.
+- Directory enumeration is not a snapshot: child creation succeeded while the directory HANDLE was open, even though directory rename was blocked. Serialize enumeration calls on one HANDLE; returned names are never authorization and must be reopened relative to the pinned parent.
+- The test-only root registry does not validate owner/DACL, authenticate the caller, load production ROOTS, or integrate with Node handlers.
+- Deadline arithmetic and actual overlapped read timeout/cancellation are tested, but the budget is not yet wired into the message-frame transport/reaper.
+- REQUEST parser validates syntax, but rootId mapping and request HANDLE context remain test-only.
+- ERROR code mapping from real Windows failures and full disconnect coverage at every protocol phase remain outstanding.
+- Write/edit/move/rename/delete semantics and operation-family race/transaction/failure matrices are not accepted.
+
+### Phase 1 status
+IN PROGRESS / NOT ACCEPTED. Production filesystem confinement remains NO-GO.
+All 15 registered production filesystem operations/modes remain unaccepted against the handle-relative / strict-single-link contract.
+
+### Exact next actions
+1. Poll GitHub Actions run #59 (run ID 45970700533). Fix any failure; do not claim CI acceptance until the whole job completes green.
+2. If green, wire the monotonic deadline budget into asynchronous framed message-pipe ACK waits using the tested cancellation/reaper ownership model.
+3. Add disconnect tests before header ACK, between DATA frames, during final ACK, and after END.
+4. Continue operation-family acceptance and resolve the hard-link threat-model/enforcement decision.
+5. Keep PR #19 and #20 Draft. Do not merge or connect them to Production before every Phase 1 acceptance gate is met.
+
+## 2026-11-27 latest continuation handoff — end-to-end read-only slice
+
+- PR #20 latest head: d6a896675f1500a3834879bbed64a68efd43228d; Draft, not merged.
+- Added end-to-end test in message-pipe-frame-transport-tests.c: REQUEST frame → rootId parser → configured root registry → request-scoped HANDLE context → final file read → RESPONSE_HEADER/DATA/END frames → ACK for each frame. Message-mode suite now has 86 assertions.
+- All eleven native test commands passed locally on Windows x64 / MSVC. CI run #59 completed green for preceding commit ae0ea46; run #60 (45971616128) is queued for latest head and must be polled.
+- The framed message-mode test is synchronous. Deadline arithmetic and cancellation are separately tested with real overlapped reads but are not yet wired into framed ACK waits.
+- Root registry remains test-only: no owner/DACL validation, caller authentication, production ROOTS loading or Node handler integration.
+- Remaining Phase 1 blockers: hard-link mutation policy, directory enumeration snapshot limitations, asynchronous framed deadlines and disconnect tests at each phase, root owner/DACL and identity, write/edit/move/rename/delete operation families and their race/transaction matrices.
+- Phase 1 remains IN PROGRESS / NOT ACCEPTED; all 15 registered production filesystem operations/modes remain unaccepted. PR #19 and #20 remain Draft; do not merge or connect to Production before the full acceptance gate passes.
+- Worktree: C:\Users\Ali\Raya-Local-MCP-staging-20261126\broker-v2-read-ops-research-20261127. Original dirty checkout C:\Users\Ali\local-mcp-bridge remains untouched.
