@@ -54,9 +54,15 @@ It is not yet integrated into Broker v2 or any application handler.
   otherwise the test reports an explicit skip. Directory junction creation is
   independently tested.
 
-## Next protocol work
+## Next protocol and I/O lifetime work
 
-`read-protocol-design.md` records a proposed bounded multi-frame read protocol and the separate unresolved overlapped-I/O cancellation lifetime model. It is a design note only; neither is implemented or integrated.
+- `read-protocol-design.md` records a proposed bounded multi-frame read protocol.
+  It is a design note only; no frame codec or transport is implemented.
+- `cancellation-lifecycle-design.md` defines the proposed OVERLAPPED/buffer/HANDLE
+  lifetime invariants, cancellation state machine, bounded admission, shutdown
+  behavior, and deterministic tests. It is a design proposal, not an implementation.
+- Frame codec work remains gated on review and deterministic testing of the
+  cancellation ownership model. The two concerns must not be conflated.
 
 ## Not yet established
 
