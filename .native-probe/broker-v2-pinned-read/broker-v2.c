@@ -467,17 +467,98 @@ done:
     CloseHandle(file);
     return ok;
 }
-static BOOL authenticate_client(HANDLE pipe,PSID expected,DWORD expected_session){
-    HANDLE tok=NULL;DWORD n=0,sess=0;BOOL ok=FALSE;TOKEN_USER *u=NULL;
-    if(!ImpersonateNamedPipeClient(pipe))return FALSE;
-    if(!OpenThreadToken(GetCurrentThread(),TOKEN_QUERY,TRUE,&tok))goto done;
-    GetTokenInformation(tok,TokenUser,NULL,0,&n);if(GetLastError()!=ERROR_INSUFFICIENT_BUFFER)goto done;
-    u=(TOKEN_USER*)LocalAlloc(LMEM_FIXED,n);if(!u)goto done;
-    if(!GetTokenInformation(tok,TokenUser,u,n,&n)||!EqualSid(u->User.Sid,expected))goto done;
-    if(!GetTokenInformation(tok,TokenSessionId,&sess,sizeof(sess),&n)||sess!=expected_session)goto done;
-    ok=TRUE;
+typedef BOOL (WINAPI *RayaGetNamedPipeClientProcessIdFn)(HANDLE, PULONG);
+
+static BOOL query_token_identity(
+    HANDLE token,
+    PSID *sid_out,
+    DWORD *session_out)
+{
+    TOKEN_USER *user = NULL;
+    DWORD bytes = 0;
+    BOOL ok = FALSE;
+
+    *sid_out = NULL;
+    (void)GetTokenInformation(token, TokenUser, NULL, 0, &bytes);
+    if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || bytes == 0)
+        return FALSE;
+    user = (TOKEN_USER *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, bytes);
+    if (user == NULL)
+        return FALSE;
+    if (!GetTokenInformation(token, TokenUser, user, bytes, &bytes))
+        goto done;
+    *sid_out = HeapAlloc(GetProcessHeap(), 0, GetLengthSid(user->User.Sid));
+    if (*sid_out == NULL ||
+        !CopySid(GetLengthSid(user->User.Sid), *sid_out, user->User.Sid))
+        goto done;
+    bytes = sizeof(*session_out);
+    if (!GetTokenInformation(token, TokenSessionId, session_out, bytes, &bytes))
+        goto done;
+    ok = TRUE;
+
 done:
-    if(u)LocalFree(u);if(tok)CloseHandle(tok);RevertToSelf();return ok;
+    if (!ok && *sid_out != NULL) {
+        HeapFree(GetProcessHeap(), 0, *sid_out);
+        *sid_out = NULL;
+    }
+    if (user != NULL)
+        HeapFree(GetProcessHeap(), 0, user);
+    return ok;
+}
+
+static BOOL authenticate_client(
+    HANDLE pipe,
+    PSID expected,
+    DWORD expected_session)
+{
+    HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");
+    RayaGetNamedPipeClientProcessIdFn get_client_pid =
+        kernel32 ? (RayaGetNamedPipeClientProcessIdFn)
+            GetProcAddress(kernel32, "GetNamedPipeClientProcessId") : NULL;
+    HANDLE impersonated_token = NULL;
+    PSID pipe_sid = NULL;
+    DWORD pipe_session = 0;
+    DWORD peer_session = 0;
+    ULONG peer_pid = 0;
+    BOOL impersonating = FALSE;
+    BOOL ok = FALSE;
+
+    /* Fail closed if the OS cannot identify the peer process on this pipe. */
+    if (expected == NULL || !IsValidSid(expected) ||
+        get_client_pid == NULL ||
+        !get_client_pid(pipe, &peer_pid) || peer_pid == 0 ||
+        !ProcessIdToSessionId((DWORD)peer_pid, &peer_session))
+        goto done;
+
+    /* The impersonation token is the authoritative security identity of the
+       named-pipe peer; do not trust any PID/SID/session supplied in a frame. */
+    if (!ImpersonateNamedPipeClient(pipe))
+        goto done;
+    impersonating = TRUE;
+    if (!OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE,
+            &impersonated_token))
+        goto done;
+    if (!query_token_identity(impersonated_token, &pipe_sid, &pipe_session))
+        goto done;
+
+    ok = EqualSid(pipe_sid, expected) &&
+        pipe_session == expected_session &&
+        peer_session == pipe_session;
+
+done:
+    if (impersonating && !RevertToSelf()) {
+        /* Continuing while still impersonating would violate the service
+           security boundary. Terminate rather than reuse this worker thread. */
+        TerminateProcess(GetCurrentProcess(), ERROR_CANNOT_IMPERSONATE);
+        ExitProcess(ERROR_CANNOT_IMPERSONATE);
+    }
+    if (pipe_sid != NULL)
+        HeapFree(GetProcessHeap(), 0, pipe_sid);
+    if (impersonated_token != NULL)
+        CloseHandle(impersonated_token);
+    if (!ok)
+        SetLastError(ERROR_ACCESS_DENIED);
+    return ok;
 }
 static BOOL wait_io(HANDLE pipe,OVERLAPPED *ov,DWORD timeout,DWORD *transferred){
     HANDLE waits[2];DWORD count=0,wr;
@@ -682,7 +763,189 @@ static int client_test(void){
     return a&&b&&c&&d?0:2;
 }
 
+static int peer_auth_client(const wchar_t *pipe_name)
+{
+    HANDLE pipe = INVALID_HANDLE_VALUE;
+    BYTE marker = 0x5A;
+    BYTE ack = 0;
+    DWORD written = 0;
+    DWORD received = 0;
+
+    pipe = CreateFileW(pipe_name, GENERIC_READ | GENERIC_WRITE, 0, NULL,
+        OPEN_EXISTING, SECURITY_SQOS_PRESENT | SECURITY_IMPERSONATION, NULL);
+    if (pipe == INVALID_HANDLE_VALUE)
+        return 10;
+    for (unsigned i = 0; i < 3; ++i) {
+        marker = (BYTE)(0x5Au + i);
+        if (!WriteFile(pipe, &marker, sizeof(marker), &written, NULL) ||
+            written != sizeof(marker)) {
+            CloseHandle(pipe);
+            return 11;
+        }
+    }
+    if (!ReadFile(pipe, &ack, sizeof(ack), &received, NULL) ||
+        received != sizeof(ack) || ack != 0xA5) {
+        CloseHandle(pipe);
+        return 12;
+    }
+    CloseHandle(pipe);
+    return 0;
+}
+
+static BOOL peer_auth_check(const wchar_t *label, BOOL condition)
+{
+    wprintf(L"%ls %ls\n", condition ? L"PASS" : L"FAIL", label);
+    return condition;
+}
+
+static int peer_auth_test(void)
+{
+    wchar_t exe[MAX_PATH];
+    wchar_t pipe_name[256];
+    wchar_t command[1024];
+    DWORD exe_length;
+    DWORD pid = GetCurrentProcessId();
+    DWORD tick = GetTickCount();
+    HANDLE pipe = INVALID_HANDLE_VALUE;
+    HANDLE child = NULL;
+    HANDLE child_thread = NULL;
+    HANDLE token = NULL;
+    PSID expected_sid = NULL;
+    PSID wrong_sid = NULL;
+    DWORD expected_session = 0;
+    DWORD wrong_sid_size = SECURITY_MAX_SID_SIZE;
+    DWORD peer_pid = 0;
+    DWORD child_exit = STILL_ACTIVE;
+    BYTE markers[3] = { 0 };
+    BYTE ack = 0xA5;
+    DWORD transferred = 0;
+    STARTUPINFOW si;
+    PROCESS_INFORMATION pi;
+    BOOL connected = FALSE;
+    BOOL all_ok = TRUE;
+    HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");
+    RayaGetNamedPipeClientProcessIdFn get_client_pid =
+        kernel32 ? (RayaGetNamedPipeClientProcessIdFn)
+            GetProcAddress(kernel32, "GetNamedPipeClientProcessId") : NULL;
+
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token) ||
+        !query_token_identity(token, &expected_sid, &expected_session)) {
+        all_ok = peer_auth_check(L"query expected local token identity", FALSE);
+        goto done;
+    }
+    (void)CloseHandle(token);
+    token = NULL;
+
+    wrong_sid = HeapAlloc(GetProcessHeap(), 0, wrong_sid_size);
+    if (wrong_sid == NULL ||
+        !CreateWellKnownSid(WinLocalServiceSid, NULL, wrong_sid, &wrong_sid_size)) {
+        all_ok = peer_auth_check(L"create non-matching expected SID", FALSE);
+        goto done;
+    }
+
+    exe_length = GetModuleFileNameW(NULL, exe, _countof(exe));
+    if (exe_length == 0 || exe_length >= _countof(exe) ||
+        swprintf_s(pipe_name, _countof(pipe_name),
+            L"\\\\.\\pipe\\RayaPeerAuth-%lu-%lu",
+            (unsigned long)pid, (unsigned long)tick) < 0) {
+        all_ok = peer_auth_check(L"construct disposable peer-auth fixture", FALSE);
+        goto done;
+    }
+
+    pipe = CreateNamedPipeW(pipe_name,
+        PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
+        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT |
+            PIPE_REJECT_REMOTE_CLIENTS,
+        1, 64, 64, 5000, NULL);
+    if (pipe == INVALID_HANDLE_VALUE) {
+        all_ok = peer_auth_check(L"create disposable local named pipe", FALSE);
+        goto done;
+    }
+
+    ZeroMemory(&si, sizeof(si));
+    ZeroMemory(&pi, sizeof(pi));
+    si.cb = sizeof(si);
+    if (swprintf_s(command, _countof(command),
+            L"\"%ls\" --peer-auth-client \"%ls\"", exe, pipe_name) < 0 ||
+        !CreateProcessW(exe, command, NULL, NULL, FALSE,
+            CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+        all_ok = peer_auth_check(L"launch disposable local pipe client", FALSE);
+        goto done;
+    }
+    child = pi.hProcess;
+    child_thread = pi.hThread;
+
+    if (ConnectNamedPipe(pipe, NULL))
+        connected = TRUE;
+    else
+        connected = GetLastError() == ERROR_PIPE_CONNECTED;
+    all_ok &= peer_auth_check(L"local peer connected", connected);
+    if (!connected)
+        goto done;
+
+    if (get_client_pid != NULL)
+        connected = get_client_pid(pipe, &peer_pid) && peer_pid == pi.dwProcessId;
+    else
+        connected = FALSE;
+    all_ok &= peer_auth_check(L"OS-reported pipe client PID matches created child",
+        connected);
+
+    for (unsigned i = 0; i < 3; ++i) {
+        BOOL read_ok = ReadFile(pipe, &markers[i], sizeof(markers[i]),
+            &transferred, NULL) && transferred == sizeof(markers[i]) &&
+            markers[i] == (BYTE)(0x5Au + i);
+        all_ok &= peer_auth_check(L"receive peer identity challenge marker", read_ok);
+        if (!read_ok)
+            goto done;
+
+        if (i == 0) {
+            all_ok &= peer_auth_check(L"authorized peer SID/session accepted",
+                authenticate_client(pipe, expected_sid, expected_session));
+        } else if (i == 1) {
+            all_ok &= peer_auth_check(L"mismatched peer SID rejected",
+                !authenticate_client(pipe, wrong_sid, expected_session));
+        } else {
+            all_ok &= peer_auth_check(L"mismatched peer session rejected",
+                !authenticate_client(pipe, expected_sid, expected_session + 1u));
+        }
+    }
+
+    if (!WriteFile(pipe, &ack, sizeof(ack), &transferred, NULL) ||
+        transferred != sizeof(ack)) {
+        all_ok &= peer_auth_check(L"release peer-auth child", FALSE);
+        goto done;
+    }
+    if (WaitForSingleObject(child, 5000) != WAIT_OBJECT_0 ||
+        !GetExitCodeProcess(child, &child_exit) || child_exit != 0) {
+        all_ok &= peer_auth_check(L"peer-auth child exits successfully", FALSE);
+        goto done;
+    }
+    all_ok &= peer_auth_check(L"peer-auth child exits successfully", TRUE);
+
+done:
+    if (child != NULL && WaitForSingleObject(child, 0) == WAIT_TIMEOUT) {
+        TerminateProcess(child, 99);
+        (void)WaitForSingleObject(child, 5000);
+    }
+    if (child_thread != NULL)
+        CloseHandle(child_thread);
+    if (child != NULL)
+        CloseHandle(child);
+    if (pipe != INVALID_HANDLE_VALUE)
+        CloseHandle(pipe);
+    if (token != NULL)
+        CloseHandle(token);
+    if (expected_sid != NULL)
+        HeapFree(GetProcessHeap(), 0, expected_sid);
+    if (wrong_sid != NULL)
+        HeapFree(GetProcessHeap(), 0, wrong_sid);
+    wprintf(L"PEER_AUTH_INTEGRATION_TESTS: %ls\n",
+        all_ok ? L"PASS" : L"FAIL");
+    return all_ok ? 0 : 1;
+}
 int wmain(int argc,wchar_t **argv){
+    if(argc==2&&!wcscmp(argv[1],L"--peer-auth-test"))return peer_auth_test();
+    if(argc==3&&!wcscmp(argv[1],L"--peer-auth-client"))return peer_auth_client(argv[2]);
     if(argc==2&&!wcscmp(argv[1],L"--prepare"))return prepare_fixture()?0:1;
     if(argc==2&&!wcscmp(argv[1],L"--install-image"))return install_image()?0:1;
     if(argc==2&&!wcscmp(argv[1],L"--cleanup"))return cleanup_fixture()?0:1;

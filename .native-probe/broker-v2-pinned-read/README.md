@@ -18,6 +18,34 @@ Status: elevated single-host runtime acceptance PASSED for this isolated test ca
 - Restricted-token security-negative harness checks write, WRITE_DAC, WRITE_OWNER, FILE_WRITE_ATTRIBUTES, directory add-file/subdirectory, image modification, and hard-link creation denial.
 - Setup includes a negative test that grants an Everyone Modify ACE to the otherwise protected root and expects the Broker to refuse startup.
 
+## Named-pipe peer identity binding
+
+The service's request authorization now combines three OS-derived facts:
+- GetNamedPipeClientProcessId supplies the peer PID; ProcessIdToSessionId must
+  resolve that PID successfully.
+- ImpersonateNamedPipeClient + OpenThreadToken obtains the actual security
+  token attached to the named-pipe client, and TokenUser/TokenSessionId are
+  queried from that token.
+- The pipe token SID/session must match the trusted configured SID/session and
+  the session reported for the OS peer PID. No identity field from the request
+  frame is trusted. Missing peer-PID API, invalid expected SID, mismatched SID
+  or mismatched session fails closed.
+- RevertToSelf is mandatory. If it fails, the service process terminates rather
+  than continuing on a worker thread that may still be impersonating the client.
+
+The non-elevated --peer-auth-test mode exercises the exact authenticate_client
+function used by the service over a real local named pipe. It verifies the OS
+peer PID against the created child process, accepts the expected SID/session,
+rejects a wrong SID, rejects a wrong session, and completes the child handshake.
+Local Windows x64/MSVC result: 9 checks passed. The elevated acceptance runner
+also invokes this test before installing the disposable service.
+
+This does not open the client process to query its primary token: the service
+uses the OS-authenticated impersonation token as the authoritative client
+identity. The PID/session comparison is an additional OS-derived consistency
+check, not a process-image allowlist. The harness is same-host and same-user
+for this peer-identity test; different-user/session and remote-host cases remain
+separate acceptance work.
 ## Elevated validation on 2026-11-27
 
 - MSVC x64 build passed with `/W4 /WX` for the broker, service-account configurator, and security-negative harness.
