@@ -20,6 +20,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build and test Broker v2 relative-path lexical gate
+        shell: cmd
+        run: .native-probe/broker-v2-read-ops/build-and-test.cmd
+
       - name: Set up Node.js
         uses: actions/setup-node@v5
         with:
