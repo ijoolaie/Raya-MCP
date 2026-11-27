@@ -8,6 +8,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createBridgeConnector } from "../connector/index.mjs";
 import { parseBridgeEndpointConfig, resolveBridgeEndpointConfig, publicBridgeEndpoint } from "../connector/config.mjs";
+import { buildTunnelEnvironment } from "./child-env.mjs";
 
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -272,7 +273,7 @@ async function startTunnel() {
   tunnelExit = null;
   tunnelState = "starting";
   const child = spawn(TUNNEL_EXE, ["run", "--profile", TUNNEL_PROFILE], {
-    cwd: ROOT, env: { ...process.env }, windowsHide: true, stdio: ["ignore", "pipe", "pipe"], shell: false
+    cwd: ROOT, env: buildTunnelEnvironment(process.env), windowsHide: true, stdio: ["ignore", "pipe", "pipe"], shell: false
   });
   tunnelChild = child;
   tunnelStartedAt = new Date().toISOString();
