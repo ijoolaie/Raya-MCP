@@ -8,6 +8,8 @@
 #include <stdlib.h>
 #include <wchar.h>
 #include <winternl.h>
+#include <aclapi.h>
+#pragma comment(lib, "Advapi32.lib")
 
 typedef NTSTATUS (NTAPI *RayaNtReadFileFn)(
     HANDLE, HANDLE, PIO_APC_ROUTINE, PVOID, PIO_STATUS_BLOCK,
@@ -237,6 +239,120 @@ fail:
     return FALSE;
 }
 
+BOOL raya_validate_root_security(HANDLE root, PSID service_sid, PSID client_sid)
+{
+    PSID owner = NULL;
+    PACL dacl = NULL;
+    PSECURITY_DESCRIPTOR sd = NULL;
+    SECURITY_DESCRIPTOR_CONTROL control = 0;
+    DWORD revision = 0;
+    ACL_SIZE_INFORMATION info;
+    SID_IDENTIFIER_AUTHORITY nt = SECURITY_NT_AUTHORITY;
+    PSID system_sid = NULL;
+    PSID admins_sid = NULL;
+    BOOL seen_service = FALSE;
+    BOOL seen_system = FALSE;
+    BOOL seen_admins = FALSE;
+    BOOL seen_client = FALSE;
+    BOOL ok = FALSE;
+    DWORD error = GetSecurityInfo(root, SE_FILE_OBJECT,
+        OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+        &owner, NULL, &dacl, NULL, &sd);
+
+    if (error != ERROR_SUCCESS || owner == NULL ||
+        service_sid == NULL || client_sid == NULL ||
+        !IsValidSid(service_sid) || !IsValidSid(client_sid) ||
+        !EqualSid(owner, service_sid) ||
+        dacl == NULL ||
+        !GetSecurityDescriptorControl(sd, &control, &revision) ||
+        (control & SE_DACL_PROTECTED) == 0 ||
+        !GetAclInformation(dacl, &info, sizeof(info), AclSizeInformation) ||
+        info.AceCount != 4)
+        goto done;
+
+    if (!AllocateAndInitializeSid(&nt, 1, SECURITY_LOCAL_SYSTEM_RID,
+            0, 0, 0, 0, 0, 0, 0, &system_sid) ||
+        !AllocateAndInitializeSid(&nt, 2, SECURITY_BUILTIN_DOMAIN_RID,
+            DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0, 0, 0, 0, &admins_sid))
+        goto done;
+
+    for (DWORD i = 0; i < info.AceCount; ++i) {
+        ACE_HEADER *header = NULL;
+        ACCESS_ALLOWED_ACE *ace;
+        PSID trustee;
+        BOOL *seen = NULL;
+        ACCESS_MASK expected_mask = 0;
+
+        if (!GetAce(dacl, i, (LPVOID *)&header) ||
+            header->AceType != ACCESS_ALLOWED_ACE_TYPE ||
+            header->AceFlags != (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE))
+            goto done;
+
+        ace = (ACCESS_ALLOWED_ACE *)header;
+        trustee = (PSID)&ace->SidStart;
+        if (EqualSid(trustee, service_sid)) {
+            seen = &seen_service;
+            expected_mask = FILE_ALL_ACCESS;
+        } else if (EqualSid(trustee, system_sid)) {
+            seen = &seen_system;
+            expected_mask = FILE_ALL_ACCESS;
+        } else if (EqualSid(trustee, admins_sid)) {
+            seen = &seen_admins;
+            expected_mask = FILE_ALL_ACCESS;
+        } else if (EqualSid(trustee, client_sid)) {
+            seen = &seen_client;
+            expected_mask = FILE_READ_DATA | FILE_READ_ATTRIBUTES |
+                READ_CONTROL | SYNCHRONIZE | FILE_LIST_DIRECTORY | FILE_TRAVERSE;
+        } else {
+            goto done;
+        }
+
+        if (*seen || ace->Mask != expected_mask)
+            goto done;
+        *seen = TRUE;
+    }
+
+    ok = seen_service && seen_system && seen_admins && seen_client;
+
+done:
+    if (system_sid != NULL)
+        FreeSid(system_sid);
+    if (admins_sid != NULL)
+        FreeSid(admins_sid);
+    if (sd != NULL)
+        LocalFree(sd);
+    if (!ok)
+        SetLastError(error == ERROR_SUCCESS ? ERROR_ACCESS_DENIED : error);
+    return ok;
+}
+
+BOOL raya_root_registry_init_secure(
+    RAYA_ROOT_REGISTRY *registry,
+    const RAYA_ROOT_CONFIG *configs,
+    size_t config_count,
+    PSID service_sid,
+    PSID client_sid)
+{
+    if (service_sid == NULL || client_sid == NULL ||
+        !IsValidSid(service_sid) || !IsValidSid(client_sid)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    if (!raya_root_registry_init(registry, configs, config_count))
+        return FALSE;
+
+    for (size_t i = 0; i < registry->count; ++i) {
+        if (!raya_validate_root_security(registry->entries[i].root_handle,
+                service_sid, client_sid)) {
+            DWORD error = GetLastError();
+            (void)raya_root_registry_close(registry);
+            SetLastError(error);
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
 BOOL raya_root_registry_encode_root_ids(
     RAYA_ROOT_REGISTRY *registry,
     uint8_t *payload,

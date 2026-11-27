@@ -547,10 +547,16 @@ $note = @'
 - In the real overlapped message-mode test harness, fixed a resource-lifetime race: the heap reaper previously called GetOverlappedResult(..., FALSE) immediately after handoff. If completion was not yet signaled, it could observe ERROR_IO_INCOMPLETE and free memory/pipe HANDLE still owned by the kernel. It now calls GetOverlappedResult(..., TRUE), which waits for terminal completion before cleanup.
 - Added a gate-based regression proving the reaper retains its operation slot and ticket while completion observation is held back.
 - Added focused framed TX/RX coverage: header ACK uses the heap-owned overlapped read and completes normally; DATA ACK is withheld, request deadline expires, operation is transferred to reaper, and resources are released only after terminal cancellation.
-- Local overlapped-message-frame suite now passes 84 assertions (58 prior). Run all twelve native commands locally before commit; push and poll CI for this change. The reaper remains a one-thread-per-timeout test prototype, not a final IOCP/shared-reaper architecture.
+- Local overlapped-message-frame suite now passes 84 assertions (58 prior). Run all thirteen native commands locally before commit; push and poll CI for this change. The reaper remains a one-thread-per-timeout test prototype, not a final IOCP/shared-reaper architecture.
 ## 2026-11-27 workspace_list aggregate research
 
 - Added test-only raya_root_registry_list_roots/raya_workspace_list_free. It snapshots configured root IDs/HANDLEs under lock, holds an active registry reference, opens a separate identity-verified directory HANDLE view per root, and enumerates each root independently.
 - Each root returns a bounded first page of up to 64 entries, rootId and relative names only, no absolute paths. A second-page probe determines whether the result is truncated. Per-root failures map to bounded RAYA_ERROR categories and do not stop other roots.
 - Root registry/request-context/workspace_list suite now passes 83 assertions, including two-root results, truncation, per-root failure isolation, cleanup and active-reference release.
 - This is a test-only adapter, not full production workspace_list: no continuation token, framed dispatch, client authentication, Node handler, UI or production ROOTS loading.
+## 2026-11-27 configured-root owner/DACL validation
+
+- Added raya_validate_root_security and raya_root_registry_init_secure to the isolated native research. Security is checked from the already-open root HANDLE: service SID owner, present protected DACL, exactly four inheritable allow ACEs, service/SYSTEM/Administrators full access and authorized client read-only.
+- Rejects extra/unknown trustees (including Everyone), duplicate ACEs, wrong client rights, wrong inheritance flags and default inherited DACLs. Secure registry initialization closes all opened root HANDLEs if any root fails validation.
+- New build-root-security-policy-tests.cmd passes 19 assertions locally. Fixture uses current process user SID as a synthetic service owner and LocalService as synthetic client; it does not prove actual service identity or authenticated pipe peer identity.
+- The CI workflow now includes the root-security policy test. Production client.policy loading and named-pipe client token/session binding remain open.

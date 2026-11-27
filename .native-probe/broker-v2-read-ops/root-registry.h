@@ -76,6 +76,20 @@ BOOL raya_root_registry_init(
     const RAYA_ROOT_CONFIG *configs,
     size_t config_count);
 
+/* Enforces the protected root policy: service SID owns the root; exactly four
+   inheritable allow ACEs exist for service, SYSTEM, Administrators and the
+   authorized client (read-only). */
+BOOL raya_validate_root_security(HANDLE root, PSID service_sid, PSID client_sid);
+
+/* Opens configured roots, then validates owner and exact protected DACL before
+   returning a usable registry. The caller must independently authenticate the
+   service identity and authorized client SID supplied to this test-only API. */
+BOOL raya_root_registry_init_secure(
+    RAYA_ROOT_REGISTRY *registry,
+    const RAYA_ROOT_CONFIG *configs,
+    size_t config_count,
+    PSID service_sid,
+    PSID client_sid);
 /* Refuses to close while any request context is active. */
 BOOL raya_root_registry_close(RAYA_ROOT_REGISTRY *registry);
 

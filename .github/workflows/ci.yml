@@ -40,6 +40,9 @@ jobs:
       - name: Build and test Broker v2 configured root registry and request contexts
         shell: cmd
         run: .native-probe/broker-v2-read-ops/build-root-registry-context-tests.cmd
+      - name: Build and test exact configured-root owner and protected DACL policy
+        shell: cmd
+        run: .native-probe/broker-v2-read-ops/build-root-security-policy-tests.cmd
 
       - name: Build and test Broker v2 overlapped-I/O lifecycle model
         shell: cmd

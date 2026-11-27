@@ -91,6 +91,33 @@ bounded RAYA_ERROR category and does not suppress the other roots.
 
 This is not production workspace_list integration: no framed request dispatcher,
 client authentication, Node handler, UI or production ROOTS loading is connected.
+## Configured-root owner and DACL policy
+
+raya_validate_root_security validates the security descriptor obtained from the
+already-open root HANDLE. The owner must equal the expected service SID; the DACL
+must be present and protected; exactly four ACEs must exist, all ACCESS_ALLOWED
+with OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE:
+- service SID: FILE_ALL_ACCESS
+- SYSTEM: FILE_ALL_ACCESS
+- Administrators: FILE_ALL_ACCESS
+- authorized client SID: the explicit read-only mask used by the Broker policy
+
+Unknown trustees, broad principals, duplicate ACEs, deny/callback ACEs, wrong
+masks, wrong inheritance flags, missing DACL, unprotected DACL and wrong owner
+are rejected. raya_root_registry_init_secure opens configured roots and validates
+every root before returning a usable registry; on any failure it closes all
+opened root HANDLEs and fails atomically.
+
+- build-root-security-policy-tests.cmd: 19 assertions for the exact valid
+  descriptor, extra Everyone ACE, overbroad client rights, duplicate service ACE,
+  wrong inheritance flags, default inherited DACL, secure init success and
+  secure init rejection.
+- The local fixture uses the current process user SID as the test service owner
+  and LocalService as the test client. It validates the policy primitive, not
+  Windows service identity. The caller must independently authenticate the
+  actual service process and obtain the authorized client SID from trusted policy.
+- This is still a test-only API. It is not wired to the production service's
+  client.policy loading or authenticated pipe peer identity.
 ## HANDLE-relative directory chain
 
 `handle-chain.c` takes a borrowed, already-authorized root directory HANDLE and a

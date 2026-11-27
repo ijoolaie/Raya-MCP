@@ -44,7 +44,7 @@ All file operations use the same final-component open helper relative to the pin
 - Configured root registry/request-context/workspace-list suite: 83 assertions.
 - Message-mode framed transport suite: 123 assertions, including one end-to-end READ_FILE path and disconnect checks before header ACK, between DATA frames, during final END ACK, and after END.
 - Overlapped message-mode ACK/deadline suite: 84 assertions for actual ACK reads, request/per-frame deadlines, heap-owned timeout handoff, terminal reaper cleanup, four-operation cap, ERROR_MORE_DATA and disconnect. The prototype uses one reaper thread per timed-out operation; it is not a shared persistent reaper or IOCP design.
-- All twelve native test commands passed locally on Windows x64/MSVC at the current working state.
+- All thirteen native test commands passed locally on Windows x64/MSVC at the current working state.
 - The local host disallowed symbolic-link creation in some fixtures (ERROR_PRIVILEGE_NOT_HELD 1314); those cases are recorded as SKIP, not PASS. CI must independently exercise them.
 
 ## Not accepted / not implemented
@@ -93,3 +93,16 @@ truncated=true without returning a continuation token. It holds a registry
 active reference until all roots have been enumerated. This is not a complete
 production workspace_list contract: no framed dispatch, continuation/session,
 Node handler, client authentication or production ROOTS integration exists.
+## Configured root owner/DACL policy
+
+raya_validate_root_security reads owner and DACL from the pinned root HANDLE.
+It requires the service SID as owner, a present protected DACL, and exactly four
+inheritable allow ACEs: service/SYSTEM/Administrators full access and the
+authorized client with the explicit read-only mask. Unknown/duplicate trustees,
+extra ACEs, broad principals, wrong masks/flags and default inherited DACLs are
+rejected. raya_root_registry_init_secure validates all opened roots and closes
+the registry atomically if any root fails. Its 19-assertion test includes valid
+and negative descriptors and secure-init behavior. The test uses the current
+process SID as a synthetic service identity; it does not authenticate the actual
+service process or pipe client. Production client.policy and peer-token binding
+remain unimplemented.

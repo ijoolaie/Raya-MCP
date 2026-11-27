@@ -1,4 +1,4 @@
-﻿# Raya Local MCP Bridge â€” Handoff
+# Raya Local MCP Bridge â€” Handoff
 Updated: 2026-11-01
 
 ## Goal
@@ -1212,4 +1212,10 @@ No Production service installation, production ACL migration, real workspace dep
 - Added raya_root_registry_list_roots/raya_workspace_list_free to the isolated Broker v2 read research. It returns one bounded first page per configured root, using a separate identity-verified root HANDLE view for each. Per-root failures map to bounded error categories and do not suppress other roots. The active registry reference blocks shutdown until enumeration completes.
 - Each root page is capped at 64 entries; a second-page probe sets truncated. It returns rootId and relative entry names only, never absolute paths. No continuation token/session exists yet.
 - Root registry/context/workspace_list suite: 83 passed, 0 failed locally. This advances workspace_list only to Partial research evidence, not Production acceptance.
-- Next after this: run all twelve native commands; update PR #20 and matrix; CI for current head must be green. Then define continuation semantics or retain this as an explicitly bounded summary, and move to caller identity/root owner-DACL acceptance.
+- Next after this: run all thirteen native commands; update PR #20 and matrix; CI for current head must be green. Then define continuation semantics or retain this as an explicitly bounded summary, and move to caller identity/root owner-DACL acceptance.
+## 2026-11-27 configured-root security policy adapter
+
+- Added raya_validate_root_security and raya_root_registry_init_secure. The validator checks owner SID and exact protected DACL from the already-open root HANDLE: service/SYSTEM/Administrators full, authorized client read-only, exactly four inheritable allow ACEs, no unknown/duplicate/broad ACEs.
+- Secure registry initialization closes all opened roots if any root fails validation. New root-security-policy test passes 19 assertions locally.
+- The fixture uses current process user SID as a synthetic service identity and LocalService as client. It does not authenticate the actual service or named-pipe peer; production client.policy loading, service identity validation and token/session binding remain open.
+- New CI step was added for this test; run all thirteen native commands and poll the new CI run after push.
