@@ -199,9 +199,9 @@ the final product policy remains an explicit security acceptance question.
 
 ## Overlapped message-mode reads
 
-overlapped-message-frame-tests.c adds a real Windows message-mode pipe experiment with FILE_FLAG_OVERLAPPED. It applies one monotonic request deadline and per-frame cap to ACK reads, covers delayed success, deadline sharing, ERROR_MORE_DATA and disconnect, and tests both safe synchronous cancellation drain and heap-owned timeout handoff. On timeout the request transfers the pending OVERLAPPED, event, buffer and pipe HANDLE to a per-operation reaper thread, then returns with a caller-owned completion ticket. The reaper observes terminal completion before closing/freeing resources. The outstanding reaper-operation cap is four; a fifth operation is rejected with ERROR_BUSY. This is a test prototype using one reaper thread per timed-out operation, not a shared persistent reaper or final IOCP architecture, and it is not integrated into the full framed TX/RX loop.
+overlapped-message-frame-tests.c adds a real Windows message-mode pipe experiment with FILE_FLAG_OVERLAPPED. It applies one monotonic request deadline and per-frame cap to ACK reads, covers delayed success, deadline sharing, ERROR_MORE_DATA and disconnect, and tests both safe synchronous cancellation drain and heap-owned timeout handoff. On timeout the request transfers the pending OVERLAPPED, event, buffer and pipe HANDLE to a per-operation reaper thread, then returns with a caller-owned completion ticket. The reaper observes terminal completion before closing/freeing resources. The outstanding reaper-operation cap is four; a fifth operation is rejected with ERROR_BUSY. This is a test prototype using one reaper thread per timed-out operation, not a shared persistent reaper or final IOCP architecture. A focused TX/RX test now drives a real response header ACK through the heap-owned overlapped read, then forces a DATA ACK timeout and verifies reaper handoff; the full application transport remains unintegrated.
 
-- build-overlapped-message-frame-tests.cmd: 58 assertions for overlapped message-mode ACK reads, heap-owned timeout handoff, reaper cleanup, four-operation cap, deadline sharing, ERROR_MORE_DATA and disconnect.
+- build-overlapped-message-frame-tests.cmd: 84 assertions for overlapped message-mode ACK reads, heap-owned timeout handoff, reaper cleanup, four-operation cap, deadline sharing, ERROR_MORE_DATA and disconnect.
 ## Test commands
 
 Run from an x64 Native Tools Command Prompt:
@@ -228,7 +228,7 @@ Run from an x64 Native Tools Command Prompt:
 - `build-message-pipe-frame-transport-tests.cmd`: message-mode pipe framing
   experiment (123 assertions), including end-to-end READ_FILE, rootless WORKSPACE_ROOTS discovery, and disconnects at four protocol phases.
 - build-overlapped-message-frame-tests.cmd: overlapped message-mode ACK/deadline
-  experiment (58 assertions).
+  experiment (84 assertions).
 
 ## Not yet established
 

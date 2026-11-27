@@ -530,3 +530,21 @@ Exact next action: obtain a green latest-head CI run; then add bounded transport
 - Added message-mode named-pipe coverage for the WORKSPACE_ROOTS request and response. Message-pipe transport tests now pass 123 assertions, including rootless request, root-ID-only payload, bounded response frames and ACKs.
 - All eleven native test commands passed on this Windows x64/MSVC host after these local changes. The current local changes are not yet committed or pushed. The green CI run #67 applies to the earlier remote head 78c87be, not these unpushed changes.
 - Production dispatch, Node/UI integration, root owner/DACL policy, caller identity, asynchronous deadline wiring and all 15 production filesystem operation acceptances remain outstanding. Phase 1 is IN PROGRESS / NOT ACCEPTED; production confinement remains NO-GO.
+## 2026-11-27 latest overlapped ACK/reaper hardening
+
+- Reviewed the heap-owned message reaper and found that its thread called GetOverlappedResult with bWait=FALSE immediately after starting. That could return ERROR_IO_INCOMPLETE and free the OVERLAPPED/buffer/pipe while the kernel still owned the pending I/O.
+- Corrected the reaper to call GetOverlappedResult with bWait=TRUE, so it cannot release resources until the operation reaches a terminal completion.
+- Added a gated regression assertion proving the reaper does not signal completion or release its slot before it is allowed to observe completion.
+- Added a focused response TX/RX integration test: a delayed header ACK completes through the heap-owned overlapped read; the next DATA ACK is withheld, times out under the shared request deadline, transfers pipe/OVERLAPPED/buffer ownership to the reaper, and is drained before cleanup.
+- The overlapped message-mode suite now passes 84 assertions locally (previously 58). This is still test-only; the one-thread-per-timeout reaper is not a production concurrency design.
+'
+[System.IO.File]::AppendAllText((Join-Path (Get-Location) $p), [Environment]::NewLine + $note, $utf8)
+
+$p = 'HANDOFF.md'
+$note = @'
+## 2026-11-27 latest overlapped ACK/reaper correction
+
+- In the real overlapped message-mode test harness, fixed a resource-lifetime race: the heap reaper previously called GetOverlappedResult(..., FALSE) immediately after handoff. If completion was not yet signaled, it could observe ERROR_IO_INCOMPLETE and free memory/pipe HANDLE still owned by the kernel. It now calls GetOverlappedResult(..., TRUE), which waits for terminal completion before cleanup.
+- Added a gate-based regression proving the reaper retains its operation slot and ticket while completion observation is held back.
+- Added focused framed TX/RX coverage: header ACK uses the heap-owned overlapped read and completes normally; DATA ACK is withheld, request deadline expires, operation is transferred to reaper, and resources are released only after terminal cancellation.
+- Local overlapped-message-frame suite now passes 84 assertions (58 prior). Run all twelve native commands locally before commit; push and poll CI for this change. The reaper remains a one-thread-per-timeout test prototype, not a final IOCP/shared-reaper architecture.

@@ -250,6 +250,15 @@ static DWORD WINAPI delayed_writer(void *parameter)
     return 0;
 }
 
+static BOOL read_message_sync(
+    HANDLE pipe, uint8_t *buffer, DWORD capacity, DWORD *received, DWORD *error)
+{
+    BOOL result;
+    *received = 0;
+    result = ReadFile(pipe, buffer, capacity, received, NULL);
+    *error = result ? ERROR_SUCCESS : GetLastError();
+    return result;
+}
 static BOOL encode_ack(uint32_t sequence, uint8_t *wire, size_t capacity, size_t *length)
 {
     uint8_t payload[4];
@@ -289,7 +298,7 @@ static DWORD WINAPI reap_heap_message_read(void *parameter)
     if (message_reaper_gate != NULL)
         (void)WaitForSingleObject(message_reaper_gate, INFINITE);
     BOOL completed = GetOverlappedResult(
-        pending->pipe, &pending->operation, &transferred, FALSE);
+        pending->pipe, &pending->operation, &transferred, TRUE);
 
     pending->ticket->bytes = transferred;
     pending->ticket->terminal_error =
@@ -537,11 +546,22 @@ static void test_heap_reaper_owns_timed_out_message_read(void)
     raya_deadline deadline;
     read_outcome outcome;
     message_reaper_ticket ticket;
+    message_reaper_gate = CreateEventW(NULL, TRUE, FALSE, NULL);
+    CHECK("create gate to hold heap reaper before completion observation",
+        message_reaper_gate != NULL);
+    if (message_reaper_gate == NULL)
+        return;
 
     CHECK("create message pipe for heap reaper ownership",
         create_message_pipe_pair(&server, &client, 6));
-    if (server == INVALID_HANDLE_VALUE || client == INVALID_HANDLE_VALUE)
+    if (server == INVALID_HANDLE_VALUE || client == INVALID_HANDLE_VALUE) {
+        if (client != INVALID_HANDLE_VALUE) CloseHandle(client);
+        if (server != INVALID_HANDLE_VALUE) CloseHandle(server);
+        SetEvent(message_reaper_gate);
+        CloseHandle(message_reaper_gate);
+        message_reaper_gate = NULL;
         return;
+    }
 
     CHECK("initialize heap-reaper request deadline",
         raya_deadline_init(&deadline, GetTickCount64(), 500));
@@ -556,11 +576,17 @@ static void test_heap_reaper_owns_timed_out_message_read(void)
 
     CloseHandle(client);
     client = INVALID_HANDLE_VALUE;
+    CHECK("reaper retains operation while completion observation is gated",
+        WaitForSingleObject(ticket.done_event, 0) == WAIT_TIMEOUT &&
+        InterlockedCompareExchange(&active_message_reapers, 0, 0) == 1);
+    SetEvent(message_reaper_gate);
     CHECK("heap reaper observes terminal cancellation and cleans resources",
         WaitForSingleObject(ticket.done_event, 5000) == WAIT_OBJECT_0 &&
         ticket.terminal_error == ERROR_OPERATION_ABORTED &&
         InterlockedCompareExchange(&active_message_reapers, 0, 0) == 0);
     CloseHandle(ticket.done_event);
+    CloseHandle(message_reaper_gate);
+    message_reaper_gate = NULL;
 }
 static void test_heap_message_reaper_admission_cap(void)
 {
@@ -824,6 +850,121 @@ static void test_overlapped_message_disconnect(void)
     CloseHandle(server);
 }
 
+static void test_overlapped_frame_ack_wait_uses_heap_reaper(void)
+{
+    HANDLE server = INVALID_HANDLE_VALUE;
+    HANDLE client = INVALID_HANDLE_VALUE;
+    HANDLE writer_thread = NULL;
+    uint8_t body[4] = { 'R', 'A', 'Y', 'A' };
+    uint8_t wire[RAYA_FRAME_WIRE_CAPACITY];
+    uint8_t incoming[RAYA_FRAME_WIRE_CAPACITY];
+    uint8_t ack_wire[RAYA_FRAME_HEADER_SIZE + 4u];
+    size_t wire_length = 0;
+    size_t ack_length = 0;
+    DWORD received = 0;
+    DWORD io_error = ERROR_SUCCESS;
+    raya_response_tx tx;
+    raya_response_rx rx;
+    raya_frame_view outgoing;
+    raya_frame_view received_frame;
+    raya_frame_view ack;
+    raya_frame_view received_ack;
+    raya_deadline deadline;
+    read_outcome outcome;
+    message_reaper_ticket ticket;
+    delayed_write writer;
+
+    CHECK("create pipe for overlapped framed ACK/reaper integration",
+        create_message_pipe_pair(&server, &client, 15));
+    if (server == INVALID_HANDLE_VALUE || client == INVALID_HANDLE_VALUE)
+        goto cleanup;
+
+    CHECK("initialize framed ACK response state",
+        raya_response_tx_init(&tx, sizeof(body), sizeof(body)));
+    raya_response_rx_init(&rx);
+    CHECK("initialize one shared deadline for framed ACK waits",
+        raya_deadline_init(&deadline, GetTickCount64(), 800));
+
+    CHECK("build response header for async ACK integration",
+        raya_response_tx_next(&tx, NULL, 0, &outgoing));
+    CHECK("encode response header for async ACK integration",
+        raya_frame_encode(&outgoing, wire, sizeof(wire), &wire_length));
+    CHECK("send response header for async ACK integration",
+        write_message(server, wire, (DWORD)wire_length));
+    CHECK("client receives response header for async ACK integration",
+        read_message_sync(client, incoming, sizeof(incoming), &received, &io_error));
+    CHECK("client decodes response header for async ACK integration",
+        raya_frame_decode(incoming, received, &received_frame));
+    CHECK("client accepts response header before ACK",
+        raya_response_rx_accept(&rx, &received_frame));
+    CHECK("client creates header ACK",
+        raya_response_rx_make_ack(&rx, &ack));
+    CHECK("encode delayed header ACK",
+        raya_frame_encode(&ack, ack_wire, sizeof(ack_wire), &ack_length));
+
+    writer.pipe = client;
+    writer.bytes = ack_wire;
+    writer.length = (DWORD)ack_length;
+    writer.delay_ms = 35;
+    writer.success = FALSE;
+    writer_thread = CreateThread(NULL, 0, delayed_writer, &writer, 0, NULL);
+    CHECK("start delayed header ACK writer", writer_thread != NULL);
+    if (writer_thread == NULL)
+        goto cleanup;
+
+    CHECK("heap-owned overlapped frame ACK read completes normally",
+        read_message_with_heap_reaper(&server, incoming, sizeof(incoming),
+            &deadline, 250, &outcome, &ticket));
+    CHECK("normal frame ACK is decoded and accepted by sender",
+        outcome.bytes == ack_length &&
+        raya_frame_decode(incoming, outcome.bytes, &received_ack) &&
+        raya_response_tx_accept_ack(&tx, &received_ack));
+    (void)WaitForSingleObject(writer_thread, 5000);
+    CloseHandle(writer_thread);
+    writer_thread = NULL;
+    CHECK("delayed header ACK writer completed", writer.success);
+
+    CHECK("build DATA frame after header ACK",
+        raya_response_tx_next(&tx, body, sizeof(body), &outgoing));
+    CHECK("send DATA frame before second ACK wait",
+        raya_frame_encode(&outgoing, wire, sizeof(wire), &wire_length) &&
+        write_message(server, wire, (DWORD)wire_length));
+    CHECK("client receives DATA frame before second ACK wait",
+        read_message_sync(client, incoming, sizeof(incoming), &received, &io_error));
+    CHECK("client decodes DATA frame before second ACK wait",
+        raya_frame_decode(incoming, received, &received_frame));
+    CHECK("client accepts DATA frame before second ACK wait",
+        raya_response_rx_accept(&rx, &received_frame));
+    CHECK("client constructs DATA ACK but deliberately withholds it",
+        raya_response_rx_make_ack(&rx, &ack) &&
+        raya_frame_encode(&ack, ack_wire, sizeof(ack_wire), &ack_length));
+
+    CHECK("missing DATA ACK times out and transfers pending read to reaper",
+        !read_message_with_heap_reaper(&server, incoming, sizeof(incoming),
+            &deadline, 100, &outcome, &ticket) &&
+        outcome.io_error == WAIT_TIMEOUT &&
+        server == INVALID_HANDLE_VALUE &&
+        ticket.done_event != NULL);
+    CHECK("framed response remains nonterminal while DATA ACK is missing",
+        !tx.complete && !rx.ended);
+    CloseHandle(client);
+    client = INVALID_HANDLE_VALUE;
+    CHECK("reaper drains timed-out framed ACK before resource release",
+        WaitForSingleObject(ticket.done_event, 5000) == WAIT_OBJECT_0 &&
+        ticket.terminal_error == ERROR_OPERATION_ABORTED &&
+        InterlockedCompareExchange(&active_message_reapers, 0, 0) == 0);
+    CloseHandle(ticket.done_event);
+
+cleanup:
+    if (writer_thread != NULL) {
+        (void)WaitForSingleObject(writer_thread, 5000);
+        CloseHandle(writer_thread);
+    }
+    if (client != INVALID_HANDLE_VALUE)
+        CloseHandle(client);
+    if (server != INVALID_HANDLE_VALUE)
+        CloseHandle(server);
+}
 int main(void)
 {
     printf("OVERLAPPED_MESSAGE_FRAME_TEST_BEGIN\n");
@@ -831,6 +972,7 @@ int main(void)
     test_heap_message_read_normal_completion();
     test_heap_reaper_owns_timed_out_message_read();
     test_heap_message_reaper_admission_cap();
+    test_overlapped_frame_ack_wait_uses_heap_reaper();
     test_overlapped_message_timeout_and_cancel();
     test_overlapped_message_shared_deadline();
     test_overlapped_message_error_more_data();
