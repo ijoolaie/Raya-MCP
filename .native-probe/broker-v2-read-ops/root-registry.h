@@ -30,6 +30,19 @@ typedef struct RAYA_ROOT_REGISTRY {
     bool closing;
 } RAYA_ROOT_REGISTRY;
 
+#define RAYA_WORKSPACE_LIST_MAX_ENTRIES_PER_ROOT 64u
+
+typedef struct RAYA_WORKSPACE_ROOT_LIST {
+    char root_id[RAYA_MAX_ROOT_ID_BYTES + 1u];
+    uint32_t error_code; /* raya_error_code; zero means success. */
+    bool truncated;
+    RAYA_DIRECTORY_PAGE page;
+} RAYA_WORKSPACE_ROOT_LIST;
+
+typedef struct RAYA_WORKSPACE_LIST {
+    size_t count;
+    RAYA_WORKSPACE_ROOT_LIST roots[RAYA_ROOT_REGISTRY_MAX_ROOTS];
+} RAYA_WORKSPACE_LIST;
 typedef struct RAYA_FILE_INFO {
     ULONGLONG size;
     ULONGLONG link_count;
@@ -74,6 +87,15 @@ BOOL raya_root_registry_encode_root_ids(
     size_t payload_capacity,
     size_t *written);
 
+/* Lists one bounded first page for each configured root, isolating per-root
+   failures. Uses independent identity-verified root HANDLE views, returns
+   rootIds and relative entry names only, and holds a registry reference until
+   every enumeration finishes. This is a test-only workspace_list adapter. */
+BOOL raya_root_registry_list_roots(
+    RAYA_ROOT_REGISTRY *registry,
+    size_t max_entries_per_root,
+    RAYA_WORKSPACE_LIST *result);
+void raya_workspace_list_free(RAYA_WORKSPACE_LIST *result);
 /* Resolves request.root_id to a configured pinned root HANDLE, then acquires
    request-scoped directory/file HANDLEs relative to that root. READ_FILE,
    GET_FILE_INFO, READ_FILE_CHUNK and READ_FILE_TAIL open the final regular file;

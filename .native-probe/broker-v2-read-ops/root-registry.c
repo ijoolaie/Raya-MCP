@@ -371,6 +371,122 @@ static BOOL split_read_path(
     return TRUE;
 }
 
+static uint32_t workspace_list_error_code(DWORD error)
+{
+    switch (error) {
+    case ERROR_ACCESS_DENIED:
+    case ERROR_PRIVILEGE_NOT_HELD:
+        return RAYA_ERROR_ACCESS_DENIED;
+    case ERROR_FILE_NOT_FOUND:
+    case ERROR_PATH_NOT_FOUND:
+    case ERROR_INVALID_DRIVE:
+        return RAYA_ERROR_NOT_FOUND;
+    case ERROR_NOT_ENOUGH_MEMORY:
+    case ERROR_OUTOFMEMORY:
+    case ERROR_MORE_DATA:
+        return RAYA_ERROR_RESOURCE_LIMIT;
+    default:
+        return RAYA_ERROR_INTERNAL;
+    }
+}
+
+void raya_workspace_list_free(RAYA_WORKSPACE_LIST *result)
+{
+    if (result == NULL)
+        return;
+    for (size_t i = 0; i < RAYA_ROOT_REGISTRY_MAX_ROOTS; ++i)
+        raya_free_directory_page(&result->roots[i].page);
+    memset(result, 0, sizeof(*result));
+}
+
+BOOL raya_root_registry_list_roots(
+    RAYA_ROOT_REGISTRY *registry,
+    size_t max_entries_per_root,
+    RAYA_WORKSPACE_LIST *result)
+{
+    char root_ids[RAYA_ROOT_REGISTRY_MAX_ROOTS][RAYA_MAX_ROOT_ID_BYTES + 1u];
+    HANDLE root_handles[RAYA_ROOT_REGISTRY_MAX_ROOTS];
+    size_t root_count;
+
+    if (registry == NULL || result == NULL ||
+        max_entries_per_root == 0 ||
+        max_entries_per_root > RAYA_WORKSPACE_LIST_MAX_ENTRIES_PER_ROOT) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    memset(result, 0, sizeof(*result));
+    memset(root_ids, 0, sizeof(root_ids));
+    memset(root_handles, 0, sizeof(root_handles));
+
+    AcquireSRWLockExclusive(&registry->lock);
+    if (!registry->initialized || registry->closing ||
+        registry->count == 0 ||
+        registry->count > RAYA_ROOT_REGISTRY_MAX_ROOTS) {
+        ReleaseSRWLockExclusive(&registry->lock);
+        SetLastError(ERROR_SHUTDOWN_IN_PROGRESS);
+        return FALSE;
+    }
+
+    root_count = registry->count;
+    for (size_t i = 0; i < root_count; ++i) {
+        memcpy(root_ids[i], registry->entries[i].root_id,
+            sizeof(root_ids[i]));
+        root_handles[i] = registry->entries[i].root_handle;
+    }
+    ++registry->active_contexts;
+    ReleaseSRWLockExclusive(&registry->lock);
+
+    result->count = root_count;
+    for (size_t i = 0; i < root_count; ++i) {
+        RAYA_WORKSPACE_ROOT_LIST *root_result = &result->roots[i];
+        HANDLE root_view = NULL;
+        RAYA_DIRECTORY_PAGE page = { 0 };
+        RAYA_DIRECTORY_PAGE next_page = { 0 };
+        BOOL opened;
+        BOOL enumerated;
+
+        memcpy(root_result->root_id, root_ids[i], sizeof(root_result->root_id));
+        opened = raya_reopen_pinned_directory(root_handles[i], &root_view);
+        if (!opened) {
+            root_result->error_code = workspace_list_error_code(GetLastError());
+            continue;
+        }
+
+        enumerated = raya_enumerate_directory_page(root_view,
+            1024u, TRUE, &page);
+        if (!enumerated) {
+            root_result->error_code = workspace_list_error_code(GetLastError());
+            raya_free_directory_page(&page);
+            CloseHandle(root_view);
+            continue;
+        }
+
+        root_result->truncated = page.count > max_entries_per_root;
+        if (!root_result->truncated && !page.done) {
+            if (!raya_enumerate_directory_page(root_view, 1024u,
+                    FALSE, &next_page)) {
+                root_result->error_code =
+                    workspace_list_error_code(GetLastError());
+                raya_free_directory_page(&page);
+                raya_free_directory_page(&next_page);
+                CloseHandle(root_view);
+                continue;
+            }
+            root_result->truncated = next_page.count != 0 || !next_page.done;
+            raya_free_directory_page(&next_page);
+        }
+        CloseHandle(root_view);
+
+        if (page.count > max_entries_per_root)
+            page.count = max_entries_per_root;
+        page.done = !root_result->truncated;
+        root_result->page = page;
+    }
+
+    release_registry_reference(registry);
+    return TRUE;
+}
 BOOL raya_request_context_begin(
     RAYA_ROOT_REGISTRY *registry,
     const raya_request *request,

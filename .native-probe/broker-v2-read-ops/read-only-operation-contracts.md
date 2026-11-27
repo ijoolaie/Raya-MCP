@@ -41,7 +41,7 @@ All file operations use the same final-component open helper relative to the pin
 ## Local evidence
 
 - REQUEST/ERROR schema suite: 69 assertions.
-- Configured root registry/request-context suite: 72 assertions.
+- Configured root registry/request-context/workspace-list suite: 83 assertions.
 - Message-mode framed transport suite: 123 assertions, including one end-to-end READ_FILE path and disconnect checks before header ACK, between DATA frames, during final END ACK, and after END.
 - Overlapped message-mode ACK/deadline suite: 84 assertions for actual ACK reads, request/per-frame deadlines, heap-owned timeout handoff, terminal reaper cleanup, four-operation cap, ERROR_MORE_DATA and disconnect. The prototype uses one reaper thread per timed-out operation; it is not a shared persistent reaper or IOCP design.
 - All twelve native test commands passed locally on Windows x64/MSVC at the current working state.
@@ -80,3 +80,16 @@ its operation slot until it observes terminal completion. The focused TX/RX
 test verifies a delayed header ACK completes normally and a missing DATA ACK
 times out, transfers ownership to the reaper, and is drained before resources
 are released. The overlapped message-mode suite now passes 84 assertions.
+
+## Workspace list aggregation
+
+The test-only raya_root_registry_list_roots adapter models workspace_list with
+no explicit path. It opens an independent identity-verified directory HANDLE
+view for each configured root, enumerates each root separately, and isolates
+per-root failures using bounded RAYA_ERROR codes. The result carries rootId and
+relative entry names only. It returns a bounded first page (1..64 entries per
+root), probes one following page to determine truncation, and reports
+truncated=true without returning a continuation token. It holds a registry
+active reference until all roots have been enumerated. This is not a complete
+production workspace_list contract: no framed dispatch, continuation/session,
+Node handler, client authentication or production ROOTS integration exists.

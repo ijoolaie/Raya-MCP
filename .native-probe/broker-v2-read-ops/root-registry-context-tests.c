@@ -136,6 +136,64 @@ static void test_workspace_roots_response(RAYA_ROOT_REGISTRY *registry)
         !raya_root_registry_encode_root_ids(registry, payload, 1, &written) &&
         GetLastError() == ERROR_INSUFFICIENT_BUFFER);
 }
+static void test_workspace_list_all_roots(RAYA_ROOT_REGISTRY *registry)
+{
+    RAYA_WORKSPACE_LIST listing = { 0 };
+    HANDLE saved_second_root;
+
+    CHECK("workspace_list enumerates every configured root",
+        raya_root_registry_list_roots(registry, 16, &listing));
+    CHECK("workspace_list returns two stable root IDs",
+        listing.count == 2 &&
+        strcmp(listing.roots[0].root_id, "fixture") == 0 &&
+        strcmp(listing.roots[1].root_id, "secondary") == 0);
+    CHECK("workspace_list returns bounded root-one entries",
+        listing.roots[0].error_code == 0 &&
+        listing.roots[0].page.count == 2 &&
+        !listing.roots[0].truncated);
+    CHECK("workspace_list marks exhausted roots complete",
+        listing.roots[0].page.done && listing.roots[1].page.done);
+    CHECK("workspace_list returns root-two entries independently",
+        listing.roots[1].error_code == 0 &&
+        listing.roots[1].page.count == 1 &&
+        wcscmp(listing.roots[1].page.entries[0].name, L"docs") == 0);
+    CHECK("workspace_list leaves no active registry reference",
+        registry->active_contexts == 0);
+    raya_workspace_list_free(&listing);
+    CHECK("workspace_list result cleanup clears owned pages",
+        listing.count == 0 && listing.roots[0].page.entries == NULL);
+
+    CHECK("workspace_list marks a capped root page as truncated",
+        raya_root_registry_list_roots(registry, 1, &listing) &&
+        listing.count == 2 &&
+        listing.roots[0].page.count == 1 &&
+        listing.roots[0].truncated && !listing.roots[0].page.done);
+    raya_workspace_list_free(&listing);
+
+    AcquireSRWLockExclusive(&registry->lock);
+    saved_second_root = registry->entries[1].root_handle;
+    registry->entries[1].root_handle = INVALID_HANDLE_VALUE;
+    ReleaseSRWLockExclusive(&registry->lock);
+
+    CHECK("workspace_list isolates one root failure and continues others",
+        raya_root_registry_list_roots(registry, 16, &listing) &&
+        listing.count == 2 &&
+        listing.roots[0].error_code == 0 &&
+        listing.roots[0].page.count == 2 &&
+        listing.roots[1].error_code == RAYA_ERROR_INTERNAL &&
+        listing.roots[1].page.count == 0);
+    raya_workspace_list_free(&listing);
+
+    AcquireSRWLockExclusive(&registry->lock);
+    registry->entries[1].root_handle = saved_second_root;
+    ReleaseSRWLockExclusive(&registry->lock);
+
+    CHECK("workspace_list rejects invalid per-root entry cap",
+        !raya_root_registry_list_roots(registry, 0, &listing) &&
+        GetLastError() == ERROR_INVALID_PARAMETER);
+    CHECK("workspace_list error paths release registry reference",
+        registry->active_contexts == 0);
+}
 static void test_read_and_root_mapping(
     RAYA_ROOT_REGISTRY *registry)
 {
@@ -551,6 +609,7 @@ int main(void)
         registry.active_contexts == 0);
 
     test_workspace_roots_response(&registry);
+    test_workspace_list_all_roots(&registry);
     test_read_and_root_mapping(&registry);
     test_list_directory_context(&registry);
     test_chunk_tail_and_file_info(&registry);

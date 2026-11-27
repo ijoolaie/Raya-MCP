@@ -32,9 +32,9 @@ stream syntax, and reserved DOS device names. It is a lexical check only.
 - Active request contexts hold a registry reference. Shutdown returns ERROR_BUSY
   until all contexts close. A context closes its file and directory-chain HANDLEs
   before releasing the registry reference.
-- `build-root-registry-context-tests.cmd`: 72 assertions for two-root binding,
+- `build-root-registry-context-tests.cmd`: 83 assertions for two-root binding,
   read/list dispatch, root-level and nested file opens, GET_FILE_INFO, chunk/tail reads, metadata, invalid ranges, unknown root rejection,
-  invalid paths, size cap, directory-vs-file rejection, WORKSPACE_ROOTS rootId-only enumeration, context close/double-close,
+  invalid paths, size cap, directory-vs-file rejection, WORKSPACE_ROOTS rootId-only enumeration, workspace_list per-root isolation/truncation, context close/double-close,
   shutdown while active, root namespace pinning, and atomic invalid-config rejection.
   Configured-root symbolic-link creation is explicitly skipped locally when
   ERROR_PRIVILEGE_NOT_HELD (1314); CI exercises this rejection.
@@ -62,7 +62,7 @@ configured absolute filesystem paths are never serialized. Unknown or closed
 registries fail closed. The request-context opener intentionally rejects this
 metadata-only operation because it does not open a filesystem object.
 
-- build-root-registry-context-tests.cmd: 72 assertions, including root list
+- build-root-registry-context-tests.cmd: 83 assertions, including root list
   encoding, stable ID order, absence of absolute paths, undersized output buffer,
   and rejection after registry shutdown.
 - build-request-error-tests.cmd: 69 assertions, including rootless
@@ -70,6 +70,27 @@ metadata-only operation because it does not open a filesystem object.
 
 This is only the native protocol/registry seam. No UI, user-facing root picker,
 Node handler, named-pipe dispatch or production workspace configuration is wired.
+## Workspace listing across configured roots
+
+raya_root_registry_list_roots is a test-only adapter for the no-path
+workspace_list behavior. It snapshots the configured root IDs and pinned root
+HANDLE values under the registry lock, increments the active registry reference,
+then opens a separate identity-verified directory HANDLE view for each root.
+Each root is enumerated independently; one root's failure is mapped to a
+bounded RAYA_ERROR category and does not suppress the other roots.
+
+- Returns stable root IDs and relative entry names only; never absolute paths.
+- Each root returns at most the requested 1..64 entries from its first OS page.
+- A second page probe determines whether more entries exist; the probe page is
+  discarded and the result marks truncated=true. This is a bounded first-page
+  summary, not a continuation/session implementation.
+- The active registry reference prevents shutdown while all roots are processed.
+- raya_workspace_list_free releases every page.
+- The 83-assertion root-registry suite covers two-root listing, separate results,
+  truncation, per-root error isolation, cleanup and active-reference release.
+
+This is not production workspace_list integration: no framed request dispatcher,
+client authentication, Node handler, UI or production ROOTS loading is connected.
 ## HANDLE-relative directory chain
 
 `handle-chain.c` takes a borrowed, already-authorized root directory HANDLE and a
@@ -214,7 +235,7 @@ Run from an x64 Native Tools Command Prompt:
 - `build-directory-enumeration-tests.cmd`: HANDLE-relative multi-page directory
   enumeration (39 assertions; four additional if symlink creation is permitted).
 - `build-root-registry-context-tests.cmd`: configured rootId binding and
-  request-scoped HANDLE lifecycle (67 assertions; one reparse-root assertion is
+  request-scoped HANDLE lifecycle (83 assertions; one reparse-root assertion is
   skipped locally when symlink creation is unavailable).
 - `build-io-lifecycle-model.cmd`: synthetic lifecycle model (34 assertions).
 - `build-deadline-tests.cmd`: request/per-frame deadline arithmetic (20 assertions).

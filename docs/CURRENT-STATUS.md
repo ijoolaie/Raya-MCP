@@ -548,3 +548,9 @@ $note = @'
 - Added a gate-based regression proving the reaper retains its operation slot and ticket while completion observation is held back.
 - Added focused framed TX/RX coverage: header ACK uses the heap-owned overlapped read and completes normally; DATA ACK is withheld, request deadline expires, operation is transferred to reaper, and resources are released only after terminal cancellation.
 - Local overlapped-message-frame suite now passes 84 assertions (58 prior). Run all twelve native commands locally before commit; push and poll CI for this change. The reaper remains a one-thread-per-timeout test prototype, not a final IOCP/shared-reaper architecture.
+## 2026-11-27 workspace_list aggregate research
+
+- Added test-only raya_root_registry_list_roots/raya_workspace_list_free. It snapshots configured root IDs/HANDLEs under lock, holds an active registry reference, opens a separate identity-verified directory HANDLE view per root, and enumerates each root independently.
+- Each root returns a bounded first page of up to 64 entries, rootId and relative names only, no absolute paths. A second-page probe determines whether the result is truncated. Per-root failures map to bounded RAYA_ERROR categories and do not stop other roots.
+- Root registry/request-context/workspace_list suite now passes 83 assertions, including two-root results, truncation, per-root failure isolation, cleanup and active-reference release.
+- This is a test-only adapter, not full production workspace_list: no continuation token, framed dispatch, client authentication, Node handler, UI or production ROOTS loading.

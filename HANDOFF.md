@@ -1207,3 +1207,9 @@ No Production service installation, production ACL migration, real workspace dep
 - Next: review and commit the local WORKSPACE_ROOTS changes; push PR #20 Draft; poll CI for the new head. Then connect the monotonic deadline budget to actual asynchronous frame/ACK transport and add cancellation/disconnect tests. Do not claim Production acceptance.
 - Important residuals remain: hard-link count is point-in-time only; enumeration is not a snapshot; root registry lacks owner/DACL and client identity validation; metadata operation has test harness only, no production dispatch/UI; async message transport deadline wiring is not implemented; all 15 production filesystem operations/modes remain unaccepted.
 - Phase 1: IN PROGRESS / NOT ACCEPTED. Production filesystem confinement: NO-GO.
+## 2026-11-27 workspace_list aggregate adapter
+
+- Added raya_root_registry_list_roots/raya_workspace_list_free to the isolated Broker v2 read research. It returns one bounded first page per configured root, using a separate identity-verified root HANDLE view for each. Per-root failures map to bounded error categories and do not suppress other roots. The active registry reference blocks shutdown until enumeration completes.
+- Each root page is capped at 64 entries; a second-page probe sets truncated. It returns rootId and relative entry names only, never absolute paths. No continuation token/session exists yet.
+- Root registry/context/workspace_list suite: 83 passed, 0 failed locally. This advances workspace_list only to Partial research evidence, not Production acceptance.
+- Next after this: run all twelve native commands; update PR #20 and matrix; CI for current head must be green. Then define continuation semantics or retain this as an explicitly bounded summary, and move to caller identity/root owner-DACL acceptance.

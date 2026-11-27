@@ -60,3 +60,6 @@ This matrix does not authorize Production integration. PR #19 and PR #20 remain 
 - Local test counts: root registry/request contexts 72; REQUEST/ERROR contracts 69; message-mode frame transport 123; overlapped message-mode ACK/deadline/reaper 84. All twelve native test commands passed locally on Windows x64/MSVC.
 - Current PR #20 head at time of this note is 4e53bf6231719db35449a965893a8c393ee4886b. CI run #69 (45980705461) is still in progress for preceding code head 4aae5b6348d8f8d3e18346296899da57d542ee9b; docs-only head may have a separate CI run.
 - No operation has crossed the Production acceptance rule. All 15 registered production operations/modes remain NOT ACCEPTED; Phase 1 remains IN PROGRESS / NOT ACCEPTED.
+
+- workspace_list now has a test-only aggregate adapter: independent identity-verified HANDLE view per root; bounded first page (up to 64 entries per root); rootId and relative names only; per-root failures normalized and isolated; active registry reference prevents shutdown during enumeration. Truncation is reported, but no continuation/session token exists.
+- Root registry/workspace_list suite now passes 83 assertions. This moves workspace_list from "no aggregate all-roots listing" to Partial evidence only; it is not production protocol dispatch or acceptance.
