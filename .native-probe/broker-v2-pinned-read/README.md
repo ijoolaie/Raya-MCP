@@ -2,11 +2,11 @@
 
 Date: 2026-11-27
 
-Status: native source and harness prepared; service runtime acceptance is BLOCKED by the current non-elevated Windows token. No Production integration.
+Status: elevated single-host runtime acceptance PASSED for this isolated test candidate. This is not Production integration and does not complete Phase 1.
 
 ## Implemented in this isolated candidate
 
-- New disposable service identity/name: `RayaFsBrokerV2Probe20261127` / `NT SERVICE\\RayaFsBrokerV2Probe20261127`.
+- Disposable service identity/name: `RayaFsBrokerV2Probe20261127` / `NT SERVICE\\RayaFsBrokerV2Probe20261127`.
 - Unique protected fixture and image paths under `C:\\ProgramData\\RayaFsBrokerV2Probe-20261127*` and `C:\\ProgramData\\RayaFsBrokerV2ProbeBin-20261127`.
 - At service startup, query the process token and require the dedicated service SID as TokenUser or an enabled TokenGroups SID. Fail closed if Backup, Restore, Take Ownership, or Debug privileges are enabled.
 - Open the configured root once, validate directory type/reparse status, verify its owner is the dedicated service SID, and require a protected non-null DACL. Keep the root HANDLE for the service lifetime.
@@ -16,26 +16,24 @@ Status: native source and harness prepared; service runtime acceptance is BLOCKE
 - Test-only setup/cleanup scripts create a uniquely named virtual-account service and protected disposable fixture, attempt root-path replacement while the service is running, and verify cleanup.
 - A restricted-token security-negative harness checks write, WRITE_DAC, WRITE_OWNER, FILE_WRITE_ATTRIBUTES, directory add-file/subdirectory, image modification, and hard-link creation denial.
 
-## Validation on 2026-11-27
+## Elevated validation on 2026-11-27
 
-- MSVC x64 build of the broker, service-account configurator, and restricted-token negative harness passed with `/W4 /WX`.
-- PowerShell setup and cleanup scripts passed syntax parsing.
-- Attempting to create the disposable service returned SCM `OpenSCManager FAILED 5: Access is denied` before service registration or ProgramData fixture creation.
-- `whoami /groups` showed `BUILTIN\\Administrators` as **Deny only** and Medium Mandatory Level; the current runner token is not elevated.
-- Cleanup verification passed: service absent, broker process absent, fixture/renamed fixture/image paths absent, and build outputs absent.
+- MSVC x64 build passed with `/W4 /WX` for the broker, service-account configurator, and security-negative harness.
+- Disposable Windows service was created and reached `Running` under the expected virtual service account; service process ExitCode was 0.
+- Positive protocol test passed: read from configured root returned the expected fixture bytes.
+- Negative protocol tests passed: unknown root, unsupported operation, and caller-supplied absolute path were rejected.
+- Restricted-token checks passed: fixture FILE_WRITE_DATA, WRITE_DAC, WRITE_OWNER, FILE_WRITE_ATTRIBUTES, directory FILE_ADD_FILE/FILE_ADD_SUBDIRECTORY, broker image GENERIC_WRITE, and fixture hard-link creation were denied.
+- Adversarial root-path replacement passed: while the service retained its root HANDLE, the original root path was renamed and a decoy directory/file was created at the old path; the service continued to return the original fixture content.
+- Runner reported `BROKER_V2_PINNED_ROOT_ACCEPTANCE_PASS` and `BROKER_V2_ACCEPTANCE_TESTS_COMPLETED`.
+- Cleanup verification passed: service absent, broker process count 0, fixture/renamed fixture/image paths absent, and build outputs absent.
 
-## Required next validation
+## Limits / not yet validated
 
-Run `run-elevated-acceptance.ps1` from an elevated PowerShell session (Run as Administrator) in this directory. It builds the native binaries, provisions the uniquely named disposable service/fixture, runs the positive and negative tests including root-path replacement, and always invokes cleanup in a `finally` block.
-
-Do not run setup without ensuring cleanup can run with the same elevated token. The scripts refuse to overwrite pre-existing service/path names and use only the uniquely named disposable v2 artifacts above.
-
-## Limits
-
-- The broker supports only one read-only fixture root and one read operation. It is not the complete 15-operation Phase 1 adapter.
-- Service runtime, actual virtual service token, protected DACL, hard-link denial, root-path replacement against the live service, and cleanup have not yet been tested because SCM access was denied.
-- No second-host remote-client test, different-user/session test, full RY2R protocol, Supervisor/Worker lifecycle integration, or provider portability proof.
-- This is not wired into `server.mjs` or `advanced-tools.mjs`; Production handlers remain unchanged.
+- One fixed fixture root + one read-only operation only; not the complete 15-operation Phase 1 adapter.
+- This is not wired into `server.mjs` or `advanced-tools.mjs`; existing Production handlers remain unchanged.
+- No second-host remote-client test, different-user/session test, full RY2R protocol, Supervisor/Worker lifecycle integration, crash/restart/tamper recovery, or provider portability proof.
+- No real workspace root/ACL migration and no persistent Production service deployment.
+- The native harness is a research prototype, not an independently security-reviewed Production component.
 - Phase 1 remains IN PROGRESS / NOT ACCEPTED; Production remains NO-GO.
 
 No runtime package imports this directory.
