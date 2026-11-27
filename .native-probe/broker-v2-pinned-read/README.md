@@ -26,11 +26,7 @@ Status: native source and harness prepared; service runtime acceptance is BLOCKE
 
 ## Required next validation
 
-Run the following from an elevated PowerShell session (Run as Administrator) in this directory:
-
-1. `.\build.cmd`
-2. `.\setup.ps1`
-3. After collecting the exact results, `.\cleanup.ps1`
+Run `run-elevated-acceptance.ps1` from an elevated PowerShell session (Run as Administrator) in this directory. It builds the native binaries, provisions the uniquely named disposable service/fixture, runs the positive and negative tests including root-path replacement, and always invokes cleanup in a `finally` block.
 
 Do not run setup without ensuring cleanup can run with the same elevated token. The scripts refuse to overwrite pre-existing service/path names and use only the uniquely named disposable v2 artifacts above.
 
