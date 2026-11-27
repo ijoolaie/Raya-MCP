@@ -278,6 +278,7 @@ static void test_disconnect_between_frames(void)
 static void test_request_error_roundtrip_over_message_pipe(void);
 static void test_end_to_end_read_only_request_over_message_pipe(void);
 static void test_disconnect_at_protocol_phases(void);
+static void test_workspace_roots_over_message_pipe(void);
 int main(void)
 {
     printf("MESSAGE_PIPE_FRAME_TRANSPORT_TEST_BEGIN\n");
@@ -287,6 +288,7 @@ int main(void)
     test_disconnect_between_frames();
     test_request_error_roundtrip_over_message_pipe();
     test_end_to_end_read_only_request_over_message_pipe();
+    test_workspace_roots_over_message_pipe();
     test_disconnect_at_protocol_phases();
 
     printf("MESSAGE_PIPE_FRAME_TRANSPORT: %u passed, %u failed\n",
@@ -711,6 +713,164 @@ static BOOL is_pipe_disconnect_error(DWORD error)
         error == ERROR_NO_DATA;
 }
 
+static void test_workspace_roots_over_message_pipe(void)
+{
+    wchar_t temp[MAX_PATH];
+    wchar_t root_path[MAX_PATH];
+    DWORD temp_length = GetTempPathW(MAX_PATH, temp);
+    HANDLE server = INVALID_HANDLE_VALUE;
+    HANDLE client = INVALID_HANDLE_VALUE;
+    RAYA_ROOT_REGISTRY registry = { 0 };
+    RAYA_ROOT_CONFIG config;
+    raya_request request = { 0 };
+    raya_request decoded_request;
+    raya_response_tx tx;
+    raya_response_rx rx;
+    uint8_t request_payload[RAYA_MAX_FRAME_PAYLOAD];
+    uint8_t root_payload[2u + RAYA_ROOT_REGISTRY_MAX_ROOTS * (1u + RAYA_MAX_ROOT_ID_BYTES)];
+    uint8_t wire[RAYA_FRAME_WIRE_CAPACITY];
+    uint8_t incoming[RAYA_FRAME_WIRE_CAPACITY];
+    uint8_t ack_wire[RAYA_FRAME_HEADER_SIZE + 4u];
+    uint8_t received_payload[sizeof(root_payload)];
+    size_t request_length = 0;
+    size_t root_length = 0;
+    size_t wire_length = 0;
+    size_t ack_length = 0;
+    size_t received_payload_length = 0;
+    DWORD received = 0;
+    DWORD io_error = ERROR_SUCCESS;
+    BOOL fixture_created = FALSE;
+    BOOL registry_open = FALSE;
+    unsigned frame_index = 0;
+
+    if (temp_length == 0 || temp_length >= MAX_PATH) {
+        CHECK("obtain temp path for WORKSPACE_ROOTS transport", FALSE);
+        return;
+    }
+    (void)swprintf_s(root_path, MAX_PATH,
+        L"%sRayaWorkspaceRoots-%lu-%llu", temp,
+        (unsigned long)GetCurrentProcessId(),
+        (unsigned long long)GetTickCount64());
+    fixture_created = CreateDirectoryW(root_path, NULL);
+    CHECK("create configured root for WORKSPACE_ROOTS transport", fixture_created);
+    if (!fixture_created)
+        goto cleanup;
+
+    config.root_id = "fixture";
+    config.absolute_path = root_path;
+    registry_open = raya_root_registry_init(&registry, &config, 1);
+    CHECK("initialize registry for WORKSPACE_ROOTS transport", registry_open);
+    if (!registry_open)
+        goto cleanup;
+
+    CHECK("create message pipe for WORKSPACE_ROOTS",
+        create_message_pipe_pair(&server, &client, 12));
+    if (server == INVALID_HANDLE_VALUE || client == INVALID_HANDLE_VALUE)
+        goto cleanup;
+
+    request.operation = RAYA_OPERATION_WORKSPACE_ROOTS;
+    CHECK("encode rootless WORKSPACE_ROOTS request",
+        raya_request_encode_payload(&request, request_payload,
+            sizeof(request_payload), &request_length));
+    if (request_length == 0)
+        goto cleanup;
+
+    raya_frame_view request_frame = {
+        RAYA_FRAME_REQUEST, 0, request_payload, (uint32_t)request_length
+    };
+    CHECK("encode WORKSPACE_ROOTS request frame",
+        raya_frame_encode(&request_frame, wire, sizeof(wire), &wire_length));
+    if (wire_length == 0)
+        goto cleanup;
+    CHECK("client sends WORKSPACE_ROOTS request",
+        write_message(client, wire, (DWORD)wire_length));
+    if (!read_message(server, incoming, sizeof(incoming), &received, &io_error))
+        goto cleanup;
+    raya_frame_view decoded_frame;
+    BOOL frame_decoded = raya_frame_decode(incoming, received, &decoded_frame);
+    CHECK("server decodes WORKSPACE_ROOTS request frame", frame_decoded);
+    if (!frame_decoded)
+        goto cleanup;
+    BOOL request_decoded = raya_request_decode_frame(&decoded_frame, &decoded_request);
+    CHECK("server validates rootless WORKSPACE_ROOTS schema",
+        request_decoded &&
+        decoded_request.operation == RAYA_OPERATION_WORKSPACE_ROOTS &&
+        decoded_request.root_id[0] == '\0' &&
+        decoded_request.relative_path[0] == L'\0');
+    if (!request_decoded)
+        goto cleanup;
+
+    BOOL root_encoded = raya_root_registry_encode_root_ids(&registry,
+        root_payload, sizeof(root_payload), &root_length);
+    CHECK("registry encodes configured root IDs", root_encoded);
+    if (!root_encoded)
+        goto cleanup;
+    CHECK("root metadata payload contains stable ID and no path",
+        root_length == 10 && root_payload[0] == 1 && root_payload[1] == 0 &&
+        root_payload[2] == 7 && memcmp(root_payload + 3, "fixture", 7) == 0);
+
+    BOOL tx_initialized = raya_response_tx_init(&tx, (uint32_t)root_length, 16);
+    CHECK("initialize bounded WORKSPACE_ROOTS response", tx_initialized);
+    if (!tx_initialized)
+        goto cleanup;
+    raya_response_rx_init(&rx);
+
+    while (!tx.complete && frame_index < 4) {
+        raya_frame_view outgoing;
+        raya_frame_view received_frame;
+        raya_frame_view ack;
+        raya_frame_view received_ack;
+        const uint8_t *frame_data = NULL;
+        uint32_t frame_data_length = 0;
+
+        if (tx.header_sent && tx.sent_bytes < tx.total_bytes) {
+            frame_data_length = tx.total_bytes - tx.sent_bytes;
+            if (frame_data_length > tx.chunk_size)
+                frame_data_length = tx.chunk_size;
+            frame_data = root_payload + tx.sent_bytes;
+        }
+        if (!raya_response_tx_next(&tx, frame_data, frame_data_length, &outgoing) ||
+            !raya_frame_encode(&outgoing, wire, sizeof(wire), &wire_length) ||
+            !write_message(server, wire, (DWORD)wire_length) ||
+            !read_message(client, incoming, sizeof(incoming), &received, &io_error) ||
+            !raya_frame_decode(incoming, received, &received_frame) ||
+            !raya_response_rx_accept(&rx, &received_frame))
+            goto cleanup;
+
+        if (received_frame.type == RAYA_FRAME_DATA) {
+            if (received_payload_length + received_frame.payload_length > sizeof(received_payload))
+                goto cleanup;
+            memcpy(received_payload + received_payload_length,
+                received_frame.payload, received_frame.payload_length);
+            received_payload_length += received_frame.payload_length;
+        }
+        if (!raya_response_rx_make_ack(&rx, &ack) ||
+            !raya_frame_encode(&ack, ack_wire, sizeof(ack_wire), &ack_length) ||
+            !write_message(client, ack_wire, (DWORD)ack_length) ||
+            !read_message(server, incoming, sizeof(incoming), &received, &io_error) ||
+            !raya_frame_decode(incoming, received, &received_ack) ||
+            !raya_response_tx_accept_ack(&tx, &received_ack))
+            goto cleanup;
+        ++frame_index;
+    }
+
+    CHECK("WORKSPACE_ROOTS response completes after END ACK",
+        tx.complete && rx.ended);
+    CHECK("client receives only configured root IDs",
+        received_payload_length == root_length &&
+        memcmp(received_payload, root_payload, root_length) == 0);
+
+cleanup:
+    if (registry_open)
+        CHECK("close WORKSPACE_ROOTS registry",
+            raya_root_registry_close(&registry));
+    if (client != INVALID_HANDLE_VALUE)
+        CloseHandle(client);
+    if (server != INVALID_HANDLE_VALUE)
+        CloseHandle(server);
+    if (fixture_created)
+        RemoveDirectoryW(root_path);
+}
 static void test_disconnect_at_protocol_phases(void)
 {
     HANDLE server = INVALID_HANDLE_VALUE;

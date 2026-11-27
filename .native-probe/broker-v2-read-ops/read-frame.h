@@ -29,7 +29,8 @@ typedef enum raya_operation {
     RAYA_OPERATION_LIST_DIRECTORY = 2,
     RAYA_OPERATION_GET_FILE_INFO = 3,
     RAYA_OPERATION_READ_FILE_CHUNK = 4,
-    RAYA_OPERATION_READ_FILE_TAIL = 5
+    RAYA_OPERATION_READ_FILE_TAIL = 5,
+    RAYA_OPERATION_WORKSPACE_ROOTS = 6
 } raya_operation;
 
 typedef enum raya_error_code {

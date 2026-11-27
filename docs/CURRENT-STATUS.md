@@ -515,3 +515,18 @@ Exact next action: obtain a green latest-head CI run; then add bounded transport
 - Remaining gates: production root owner/DACL and authenticated client identity; production ROOTS integration; full asynchronous framed deadlines/cancellation/disconnect matrix; workspace_roots/workspace_list/read_multiple_files/search; write/edit/create/move/rename/delete; directory enumeration consistency; hard-link mutation policy.
 - Phase 1 remains IN PROGRESS / NOT ACCEPTED. All 15 production filesystem operations/modes remain unaccepted. Production confinement remains NO-GO.
 - Original dirty checkout C:\Users\Ali\local-mcp-bridge remains untouched; no Production service, ACL migration or real workspace deployment.
+
+## 2026-11-27 follow-up — WORKSPACE_ROOTS transport test
+
+- Added a real message-mode named-pipe harness path for rootless WORKSPACE_ROOTS: REQUEST frame, schema decode, registry rootId-only payload, bounded RESPONSE_HEADER/DATA/END, per-frame ACK and byte-for-byte response verification.
+- Message-pipe transport harness now passes 123 assertions; root registry/request contexts pass 72; REQUEST/ERROR contracts pass 69; directory enumeration passes 39 (plus four optional symlink assertions when privilege permits).
+- The harness remains synchronous and test-only. It does not constitute production dispatch, deadline wiring, identity authorization or Node integration.
+- CI run #67 was green for prior head 78c87be; the WORKSPACE_ROOTS transport changes are local pending commit/push and a new CI run.
+## 2026-11-27 latest superseding state — WORKSPACE_ROOTS transport
+
+- Current PR #20 remote head before this local batch: 78c87be289a4cf5423479bfd6e5670a26a6bae34. PR remains Draft and unmerged.
+- The previously recorded 44 root-registry assertions are superseded: the expanded suite now passes 72 assertions. REQUEST/ERROR contract tests now pass 69 (previously 44/62 in older notes). Directory enumeration passes 39 assertions locally (plus four optional symlink checks if permitted).
+- Added WORKSPACE_ROOTS as a rootless operation code 6. Its request contains no rootId/path; the registry emits only stable IDs in a bounded binary payload, never absolute paths. The request-context opener does not treat this metadata-only operation as a filesystem open.
+- Added message-mode named-pipe coverage for the WORKSPACE_ROOTS request and response. Message-pipe transport tests now pass 123 assertions, including rootless request, root-ID-only payload, bounded response frames and ACKs.
+- All eleven native test commands passed on this Windows x64/MSVC host after these local changes. The current local changes are not yet committed or pushed. The green CI run #67 applies to the earlier remote head 78c87be, not these unpushed changes.
+- Production dispatch, Node/UI integration, root owner/DACL policy, caller identity, asynchronous deadline wiring and all 15 production filesystem operation acceptances remain outstanding. Phase 1 is IN PROGRESS / NOT ACCEPTED; production confinement remains NO-GO.

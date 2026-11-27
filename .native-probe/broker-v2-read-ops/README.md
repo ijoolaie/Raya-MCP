@@ -32,9 +32,9 @@ stream syntax, and reserved DOS device names. It is a lexical check only.
 - Active request contexts hold a registry reference. Shutdown returns ERROR_BUSY
   until all contexts close. A context closes its file and directory-chain HANDLEs
   before releasing the registry reference.
-- `build-root-registry-context-tests.cmd`: 63 assertions for two-root binding,
+- `build-root-registry-context-tests.cmd`: 72 assertions for two-root binding,
   read/list dispatch, root-level and nested file opens, GET_FILE_INFO, chunk/tail reads, metadata, invalid ranges, unknown root rejection,
-  invalid paths, size cap, directory-vs-file rejection, context close/double-close,
+  invalid paths, size cap, directory-vs-file rejection, WORKSPACE_ROOTS rootId-only enumeration, context close/double-close,
   shutdown while active, root namespace pinning, and atomic invalid-config rejection.
   Configured-root symbolic-link creation is explicitly skipped locally when
   ERROR_PRIVILEGE_NOT_HELD (1314); CI exercises this rejection.
@@ -52,6 +52,24 @@ See docs/PHASE1-FILESYSTEM-OPERATION-ACCEPTANCE-MATRIX.md for the explicit 15-op
 
 See read-only-operation-contracts.md for the 20-byte REQUEST schema and the current READ_FILE, GET_FILE_INFO, READ_FILE_CHUNK, READ_FILE_TAIL and LIST_DIRECTORY research contracts, including their limits and non-acceptance boundaries.
 
+## Workspace root discovery
+
+The request protocol defines WORKSPACE_ROOTS as a rootless operation: its
+REQUEST contains neither rootId nor relative path. The test-only registry returns
+a bounded little-endian payload containing a 16-bit root count followed by
+one-byte ASCII rootId lengths and rootId bytes. Only stable IDs are exposed;
+configured absolute filesystem paths are never serialized. Unknown or closed
+registries fail closed. The request-context opener intentionally rejects this
+metadata-only operation because it does not open a filesystem object.
+
+- build-root-registry-context-tests.cmd: 72 assertions, including root list
+  encoding, stable ID order, absence of absolute paths, undersized output buffer,
+  and rejection after registry shutdown.
+- build-request-error-tests.cmd: 69 assertions, including rootless
+  WORKSPACE_ROOTS request round-trip and rejection of caller-supplied rootId/path.
+
+This is only the native protocol/registry seam. No UI, user-facing root picker,
+Node handler, named-pipe dispatch or production workspace configuration is wired.
 ## HANDLE-relative directory chain
 
 `handle-chain.c` takes a borrowed, already-authorized root directory HANDLE and a
@@ -88,7 +106,7 @@ separate handle-relative open and same-HANDLE revalidation.
   directory itself was blocked. Concurrent create/delete/rename can therefore
   change which entries appear across pages; callers must not assume snapshot
   semantics or use returned names as authorization.
-- `build-directory-enumeration-tests.cmd`: 30 base assertions (plus four when
+- `build-directory-enumeration-tests.cmd`: 39 assertions (plus four when
   directory symbolic-link creation is permitted) over 1,200 files across multiple
   pages, restart, over-cap failure, empty-directory end, invalid handles, and
   directory rename pinning. Directory symbolic-link creation was explicitly
@@ -164,7 +182,7 @@ the final product policy remains an explicit security acceptance question.
   chunks must have the exact expected size, including the final short chunk.
 - `build-read-frame-tests.cmd`: 57 pure C assertions for wire layout, malformed
   frames, response boundaries, ACK validation and response sequencing.
-- `build-request-error-tests.cmd`: 62 assertions for REQUEST/ERROR payload
+- `build-request-error-tests.cmd`: 69 assertions for REQUEST/ERROR payload
   contracts, rootId syntax, relative path and UTF-16 validation, reserved fields,
   frame sequencing, error-code bounds, and terminal ERROR acknowledgement.
 - build-message-pipe-frame-transport-tests.cmd: 109 actual Windows message-mode
@@ -206,9 +224,9 @@ Run from an x64 Native Tools Command Prompt:
   experiment (42 assertions).
 - `build-read-frame-tests.cmd`: bounded read-frame codec and response state
   machine (57 assertions).
-- `build-request-error-tests.cmd`: REQUEST/ERROR payload contracts (62 assertions), including five read-only operation schemas and offset/length bounds.
+- `build-request-error-tests.cmd`: REQUEST/ERROR payload contracts (69 assertions), including WORKSPACE_ROOTS plus five read-only operation schemas and offset/length bounds.
 - `build-message-pipe-frame-transport-tests.cmd`: message-mode pipe framing
-  experiment (109 assertions), including end-to-end READ_FILE and disconnects at four protocol phases.
+  experiment (123 assertions), including end-to-end READ_FILE, rootless WORKSPACE_ROOTS discovery, and disconnects at four protocol phases.
 - build-overlapped-message-frame-tests.cmd: overlapped message-mode ACK/deadline
   experiment (58 assertions).
 

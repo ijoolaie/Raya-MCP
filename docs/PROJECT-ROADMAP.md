@@ -319,3 +319,7 @@ A separate test harness now applies the monotonic request deadline and per-frame
 This does not complete asynchronous transport: the full response TX/RX loop is still synchronous, and the test helper waits without a deadline after cancellation to preserve stack OVERLAPPED/event/buffer lifetime. The heap-owned timeout path now transfers operation records to one reaper thread per timed-out operation, with a four-operation cap. Production integration still needs full framed TX/RX wiring and a decision between shared reaper queue and IOCP.
 
 CI run #63 for d74c23c is fully green. The new helper and its CI step are being added in the next isolated commit. Phase 1 remains IN PROGRESS / NOT ACCEPTED.
+
+## 2026-11-27 latest WORKSPACE_ROOTS update
+
+The root discovery contract now has a rootless operation code 6. Its request contains no rootId or path; the test registry returns only stable root IDs, not absolute paths. The message-mode pipe harness now exercises the request and bounded framed response with ACKs. Local counts: root registry/request contexts 72; REQUEST/ERROR contracts 69; directory enumeration 39 (four optional symlink assertions unavailable locally); message-pipe transport 123. All eleven native test commands pass locally. These latest changes are still uncommitted/unpushed; remote CI green status applies only to earlier head 78c87be. Production dispatch, async deadlines, caller identity, owner/DACL checks and all 15 operation-family acceptances remain outstanding. Phase 1 remains IN PROGRESS / NOT ACCEPTED.

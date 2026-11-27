@@ -66,6 +66,14 @@ BOOL raya_root_registry_init(
 /* Refuses to close while any request context is active. */
 BOOL raya_root_registry_close(RAYA_ROOT_REGISTRY *registry);
 
+/* Encodes configured root IDs only: u16 count, then repeated u8 length + ASCII ID.
+   Absolute filesystem paths are never returned by this protocol operation. */
+BOOL raya_root_registry_encode_root_ids(
+    RAYA_ROOT_REGISTRY *registry,
+    uint8_t *payload,
+    size_t payload_capacity,
+    size_t *written);
+
 /* Resolves request.root_id to a configured pinned root HANDLE, then acquires
    request-scoped directory/file HANDLEs relative to that root. READ_FILE,
    GET_FILE_INFO, READ_FILE_CHUNK and READ_FILE_TAIL open the final regular file;

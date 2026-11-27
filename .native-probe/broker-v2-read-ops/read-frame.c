@@ -293,7 +293,7 @@ bool raya_response_rx_make_ack(
 static bool operation_valid(uint16_t operation)
 {
     return operation >= RAYA_OPERATION_READ_FILE &&
-        operation <= RAYA_OPERATION_READ_FILE_TAIL;
+        operation <= RAYA_OPERATION_WORKSPACE_ROOTS;
 }
 
 static bool request_arguments_valid(
@@ -310,6 +310,8 @@ static bool request_arguments_valid(
     case RAYA_OPERATION_READ_FILE_TAIL:
         return offset == 0 && length != 0 &&
             length <= RAYA_MAX_RESPONSE_BYTES;
+    case RAYA_OPERATION_WORKSPACE_ROOTS:
+        return offset == 0 && length == 0;
     default:
         return false;
     }
@@ -397,12 +399,16 @@ bool raya_request_encode_payload(
     path_length = bounded_wide_length(request->relative_path,
         RAYA_MAX_REQUEST_PATH_CHARS + 1u);
 
-    if (root_length == 0 || root_length > RAYA_MAX_ROOT_ID_BYTES ||
+    if (root_length > RAYA_MAX_ROOT_ID_BYTES ||
         path_length > RAYA_MAX_REQUEST_PATH_CHARS ||
-        !root_id_valid(request->root_id, root_length))
+        (request->operation == RAYA_OPERATION_WORKSPACE_ROOTS
+            ? (root_length != 0 || path_length != 0)
+            : (root_length == 0 || !root_id_valid(request->root_id, root_length))))
         return false;
 
-    if ((request->operation != RAYA_OPERATION_LIST_DIRECTORY && path_length == 0) ||
+    if ((request->operation != RAYA_OPERATION_LIST_DIRECTORY &&
+         request->operation != RAYA_OPERATION_WORKSPACE_ROOTS &&
+         path_length == 0) ||
         !request_arguments_valid(request->operation, request->offset, request->length))
         return false;
     if (path_length != 0 &&
@@ -459,11 +465,13 @@ bool raya_request_decode_frame(
     request_length = read_u32_le(payload + 16);
 
     if (!operation_valid(operation) || read_u16_le(payload + 6) != 0 ||
-        root_length == 0 || root_length > RAYA_MAX_ROOT_ID_BYTES ||
+        root_length > RAYA_MAX_ROOT_ID_BYTES ||
         path_length > RAYA_MAX_REQUEST_PATH_CHARS ||
+        (operation == RAYA_OPERATION_WORKSPACE_ROOTS
+            ? (root_length != 0 || path_length != 0)
+            : root_length == 0) ||
         !request_arguments_valid(operation, offset, request_length))
         return false;
-
     expected_length = RAYA_REQUEST_FIXED_BYTES + (size_t)root_length +
         (size_t)path_length * 2u;
     if (frame->payload_length != expected_length)
@@ -475,7 +483,7 @@ bool raya_request_decode_frame(
     candidate.length = request_length;
     memcpy(candidate.root_id, payload + RAYA_REQUEST_FIXED_BYTES, root_length);
     candidate.root_id[root_length] = '\0';
-    if (!root_id_valid(candidate.root_id, root_length))
+    if (root_length != 0 && !root_id_valid(candidate.root_id, root_length))
         return false;
 
     for (size_t i = 0; i < path_length; ++i) {
@@ -485,7 +493,8 @@ bool raya_request_decode_frame(
     }
     candidate.relative_path[path_length] = L'\0';
 
-    if (operation != RAYA_OPERATION_LIST_DIRECTORY && path_length == 0)
+    if (operation != RAYA_OPERATION_LIST_DIRECTORY &&
+        operation != RAYA_OPERATION_WORKSPACE_ROOTS && path_length == 0)
         return false;
     if (path_length != 0 &&
         !utf16_path_valid(candidate.relative_path, path_length))

@@ -120,6 +120,15 @@ static void test_request_round_trips(void)
         raya_request_decode_frame(&frame, &decoded) &&
         decoded.operation == RAYA_OPERATION_READ_FILE_TAIL &&
         decoded.offset == 0 && decoded.length == 1024);
+    memset(&source, 0, sizeof(source));
+    source.operation = RAYA_OPERATION_WORKSPACE_ROOTS;
+    CHECK("encode WORKSPACE_ROOTS request without rootId or path",
+        raya_request_encode_payload(&source, payload, sizeof(payload), &written));
+    frame = make_frame(RAYA_FRAME_REQUEST, 0, payload, (uint32_t)written);
+    CHECK("decode WORKSPACE_ROOTS request without rootId or path",
+        raya_request_decode_frame(&frame, &decoded) &&
+        decoded.operation == RAYA_OPERATION_WORKSPACE_ROOTS &&
+        decoded.root_id[0] == '\0' && decoded.relative_path[0] == L'\0');
 }
 
 static void test_request_encoder_rejects_invalid_values(void)
@@ -211,6 +220,16 @@ static void test_request_encoder_rejects_invalid_values(void)
     request.operation = RAYA_OPERATION_GET_FILE_INFO;
     request.length = 1;
     CHECK("GET_FILE_INFO rejects range arguments",
+        !raya_request_encode_payload(&request, payload, sizeof(payload), &written));
+    memset(&request, 0, sizeof(request));
+    request.operation = RAYA_OPERATION_WORKSPACE_ROOTS;
+    strcpy_s(request.root_id, sizeof(request.root_id), "fixture");
+    CHECK("WORKSPACE_ROOTS rejects request-supplied rootId",
+        !raya_request_encode_payload(&request, payload, sizeof(payload), &written));
+    request.root_id[0] = '\0';
+    request.relative_path[0] = L'x';
+    request.relative_path[1] = L'\0';
+    CHECK("WORKSPACE_ROOTS rejects request-supplied path",
         !raya_request_encode_payload(&request, payload, sizeof(payload), &written));
 }
 
@@ -311,7 +330,31 @@ static void test_request_decoder_rejects_invalid_frames(void)
         !raya_request_decode_frame(&frame, &decoded));
     put_u64(payload + 8, 0);
 
+    /* WORKSPACE_ROOTS is the only request with no rootId and no path. */
+    put_u16(payload, RAYA_OPERATION_WORKSPACE_ROOTS);
+    put_u16(payload + 2, 0);
+    put_u16(payload + 4, 0);
+    frame.payload_length = RAYA_REQUEST_FIXED_BYTES;
+    CHECK("decoder accepts rootless WORKSPACE_ROOTS request",
+        raya_request_decode_frame(&frame, &decoded) &&
+        decoded.operation == RAYA_OPERATION_WORKSPACE_ROOTS);
+    put_u16(payload + 4, 1);
+    put_u16(payload + RAYA_REQUEST_FIXED_BYTES, (uint16_t)L'x');
+    frame.payload_length = RAYA_REQUEST_FIXED_BYTES + 2;
+    CHECK("decoder rejects WORKSPACE_ROOTS path",
+        !raya_request_decode_frame(&frame, &decoded));
+    put_u16(payload + 4, 0);
+    frame.payload_length = RAYA_REQUEST_FIXED_BYTES;
+    put_u16(payload + 2, 1);
+    payload[RAYA_REQUEST_FIXED_BYTES] = 'x';
+    frame.payload_length = RAYA_REQUEST_FIXED_BYTES + 1;
+    CHECK("decoder rejects WORKSPACE_ROOTS rootId",
+        !raya_request_decode_frame(&frame, &decoded));
+
     put_u16(payload, RAYA_OPERATION_READ_FILE_CHUNK);
+    put_u16(payload + 2, 7);
+    put_u16(payload + 4, 8);
+    frame.payload_length = valid_length;
     put_u32(payload + 16, 0);
     CHECK("decoder rejects zero-length chunk request",
         !raya_request_decode_frame(&frame, &decoded));

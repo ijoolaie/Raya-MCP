@@ -116,6 +116,26 @@ static void cleanup_fixtures(
     (void)RemoveDirectoryW(base);
 }
 
+static void test_workspace_roots_response(RAYA_ROOT_REGISTRY *registry)
+{
+    uint8_t payload[512];
+    size_t written = 0;
+
+    ZeroMemory(payload, sizeof(payload));
+    CHECK("encode configured WORKSPACE_ROOTS response",
+        raya_root_registry_encode_root_ids(
+            registry, payload, sizeof(payload), &written));
+    CHECK("WORKSPACE_ROOTS response contains two stable root IDs only",
+        written == 20 && payload[0] == 2 && payload[1] == 0 &&
+        payload[2] == 7 && memcmp(payload + 3, "fixture", 7) == 0 &&
+        payload[10] == 9 && memcmp(payload + 11, "secondary", 9) == 0);
+    CHECK("WORKSPACE_ROOTS response never includes absolute root paths",
+        memcmp(payload, "C:\\\\", 3) != 0 &&
+        memcmp(payload, "D:\\\\", 3) != 0);
+    CHECK("WORKSPACE_ROOTS response rejects insufficient output buffer",
+        !raya_root_registry_encode_root_ids(registry, payload, 1, &written) &&
+        GetLastError() == ERROR_INSUFFICIENT_BUFFER);
+}
 static void test_read_and_root_mapping(
     RAYA_ROOT_REGISTRY *registry)
 {
@@ -355,6 +375,8 @@ static void test_invalid_requests_and_registry_close(
     RAYA_REQUEST_CONTEXT context = { 0 };
     wchar_t renamed[MAX_PATH];
     BOOL rename_while_open;
+    uint8_t payload[512];
+    size_t written = 0;
     HANDLE saved_root = registry->entries[0].root_handle;
 
     memset(&request, 0, sizeof(request));
@@ -435,6 +457,10 @@ static void test_invalid_requests_and_registry_close(
 
     CHECK("close root registry after requests drained",
         raya_root_registry_close(registry));
+    CHECK("closed registry refuses WORKSPACE_ROOTS enumeration",
+        !raya_root_registry_encode_root_ids(registry, payload,
+            sizeof(payload), &written) &&
+        GetLastError() == ERROR_SHUTDOWN_IN_PROGRESS);
     CHECK("registry shutdown closes pinned root HANDLE",
         GetFileType(saved_root) == FILE_TYPE_UNKNOWN);
     CHECK("root directory rename succeeds after registry close",
@@ -524,6 +550,7 @@ int main(void)
         registry.initialized && registry.count == 2 &&
         registry.active_contexts == 0);
 
+    test_workspace_roots_response(&registry);
     test_read_and_root_mapping(&registry);
     test_list_directory_context(&registry);
     test_chunk_tail_and_file_info(&registry);

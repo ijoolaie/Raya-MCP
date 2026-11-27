@@ -65,8 +65,8 @@ The overlapped-message-frame-tests.c experiment applies request/per-frame budget
 ## Implemented test coverage
 
 - `read-frame-tests.c`: 57 pure C assertions for byte layout, malformed frames, size boundaries, the 16-frame ceiling, ACK validation, sequencing and END.
-- `request-error-tests.c`: 62 assertions for REQUEST and ERROR schemas, rootId syntax, UTF-16/path validation, reserved fields, malformed payloads, error-code bounds, and terminal ERROR ACK.
-- message-pipe-frame-transport-tests.c: 109 assertions using real Windows
+- `request-error-tests.c`: 69 assertions for REQUEST and ERROR schemas, rootId syntax, UTF-16/path validation, reserved fields, malformed payloads, error-code bounds, and terminal ERROR ACK.
+- message-pipe-frame-transport-tests.c: 123 assertions using real Windows
   message-mode named pipes. Full transfers cover zero bytes, chunk-plus-one, and
   exactly 256 KiB. REQUEST and terminal ERROR are sent over the pipe with an ACK.
   A deliberately short read returns ERROR_MORE_DATA; a truncated frame is
@@ -100,3 +100,18 @@ Framing does not authorize filesystem access or repair path races. The receiver 
 ## Non-goals
 
 No production service installation, persistent service, ACL migration, workspace deployment, or integration into Raya Local MCP production handlers.
+## WORKSPACE_ROOTS metadata operation
+
+Operation code 6 is a rootless metadata request. Its REQUEST must carry empty
+rootId and path fields and zero offset/length. The registry responds with a
+bounded payload: little-endian u16 root count, then for each configured root a
+u8 byte length and ASCII rootId bytes. Absolute configured paths are never
+returned. This operation does not create a filesystem request context; the
+registry metadata accessor is separately guarded by its lifecycle lock and
+refuses calls after shutdown begins. The current tests validate codec and
+registry encoding only; named-pipe dispatch and application integration remain
+unimplemented.The message-mode transport harness now exercises WORKSPACE_ROOTS end to end:
+it sends a rootless REQUEST message, validates the operation schema, asks the
+configured registry for stable root IDs only, sends the bounded payload through
+RESPONSE_HEADER/DATA/END with per-frame ACKs, and verifies the received bytes.
+This is still test-harness dispatch, not a production named-pipe server.

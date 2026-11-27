@@ -237,6 +237,59 @@ fail:
     return FALSE;
 }
 
+BOOL raya_root_registry_encode_root_ids(
+    RAYA_ROOT_REGISTRY *registry,
+    uint8_t *payload,
+    size_t payload_capacity,
+    size_t *written)
+{
+    size_t required = 2u;
+    size_t cursor = 2u;
+
+    if (written != NULL)
+        *written = 0;
+    if (registry == NULL || payload == NULL || written == NULL) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    AcquireSRWLockShared(&registry->lock);
+    if (!registry->initialized || registry->closing) {
+        ReleaseSRWLockShared(&registry->lock);
+        SetLastError(ERROR_SHUTDOWN_IN_PROGRESS);
+        return FALSE;
+    }
+
+    for (size_t i = 0; i < registry->count; ++i) {
+        size_t length = strlen(registry->entries[i].root_id);
+        if (length == 0 || length > RAYA_MAX_ROOT_ID_BYTES ||
+            required > SIZE_MAX - 1u - length) {
+            ReleaseSRWLockShared(&registry->lock);
+            SetLastError(ERROR_INVALID_DATA);
+            return FALSE;
+        }
+        required += 1u + length;
+    }
+
+    if (payload_capacity < required) {
+        ReleaseSRWLockShared(&registry->lock);
+        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+        return FALSE;
+    }
+
+    payload[0] = (uint8_t)registry->count;
+    payload[1] = (uint8_t)(registry->count >> 8);
+    for (size_t i = 0; i < registry->count; ++i) {
+        size_t length = strlen(registry->entries[i].root_id);
+        payload[cursor++] = (uint8_t)length;
+        memcpy(payload + cursor, registry->entries[i].root_id, length);
+        cursor += length;
+    }
+
+    ReleaseSRWLockShared(&registry->lock);
+    *written = cursor;
+    return TRUE;
+}
 BOOL raya_root_registry_close(RAYA_ROOT_REGISTRY *registry)
 {
     BOOL success = TRUE;

@@ -1196,3 +1196,14 @@ All 15 registered production filesystem operations/modes remain unaccepted again
 5. Resolve hard-link policy and production root owner/DACL/client identity before any Production integration.
 
 No Production service installation, production ACL migration, real workspace deployment or Node handler integration was performed.
+
+## 2026-11-27 latest continuation state — rootless workspace discovery
+
+- PR #20 remains Draft/unmerged. Remote head at last confirmed check: 78c87be289a4cf5423479bfd6e5670a26a6bae34. CI run #67 for that exact head was green; local changes described below are not yet pushed, so they have no CI result yet.
+- New rootless operation WORKSPACE_ROOTS (code 6): REQUEST must carry empty rootId/path and zero offset/length. The configured root registry returns only stable root IDs, encoded as u16 count + repeated u8 length and ASCII ID. Absolute paths are never returned. This metadata operation is separate from request-scoped filesystem HANDLE contexts.
+- Added actual message-mode named-pipe harness path for WORKSPACE_ROOTS: sends rootless REQUEST, decodes schema, gets IDs from registry, transfers bounded response through RESPONSE_HEADER/DATA/END with per-frame ACKs, and byte-compares the received IDs.
+- Current local test counts after all eleven native commands: lexical 25; HANDLE chain passes; directory enumeration 39 (symbolic-link case skipped locally due ERROR_PRIVILEGE_NOT_HELD 1314); root registry/request contexts 72 (configured-root symbolic-link case skipped for same reason); lifecycle model 34; deadline arithmetic 20; overlapped pipe cancellation 23; heap reaper 42; frame codec 57; REQUEST/ERROR 69; message-pipe transport 123. All passed locally on Windows x64/MSVC.
+- All changes are isolated in C:\Users\Ali\Raya-Local-MCP-staging-20261126\broker-v2-read-ops-research-20261127. The dirty original checkout remains untouched.
+- Next: review and commit the local WORKSPACE_ROOTS changes; push PR #20 Draft; poll CI for the new head. Then connect the monotonic deadline budget to actual asynchronous frame/ACK transport and add cancellation/disconnect tests. Do not claim Production acceptance.
+- Important residuals remain: hard-link count is point-in-time only; enumeration is not a snapshot; root registry lacks owner/DACL and client identity validation; metadata operation has test harness only, no production dispatch/UI; async message transport deadline wiring is not implemented; all 15 production filesystem operations/modes remain unaccepted.
+- Phase 1: IN PROGRESS / NOT ACCEPTED. Production filesystem confinement: NO-GO.
