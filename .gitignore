@@ -57,3 +57,18 @@ to-iman-hand-off.md
 Thumbs.db
 .vscode/
 .idea/
+
+# Local-only workspaces and generated acceptance data
+/workspaces/
+/tools/
+/checkpoints/
+broker-prototype-v2-*/
+raya-tool-test-temp/
+
+# User-specific runtime configuration and credentials
+raya-local.yaml*
+raya-admin-panel/panel-config.json
+raya-admin-panel/panel-config.*.json
+*.dpapi
+panel-token.txt
+*.tar.gz
