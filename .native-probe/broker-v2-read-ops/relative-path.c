@@ -1,4 +1,4 @@
-#include "relative-path.h"
+﻿#include "relative-path.h"
 #include <wchar.h>
 
 static BOOL is_separator(wchar_t ch) { return ch == L'\\'; }
@@ -17,7 +17,7 @@ static BOOL ascii_equal_fold(const wchar_t *a, const wchar_t *b)
 static BOOL reserved_device_component(const wchar_t *s, size_t n)
 {
     size_t base = 0;
-    wchar_t name[7] = {0};
+    wchar_t name[8] = {0};
     while (base < n && s[base] != L'.') ++base;
     if (base == 0 || base >= sizeof(name) / sizeof(name[0])) return FALSE;
     for (size_t i = 0; i < base; ++i) name[i] = ascii_upper(s[i]);
