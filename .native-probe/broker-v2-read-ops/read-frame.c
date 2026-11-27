@@ -1,4 +1,5 @@
 #include "read-frame.h"
+#include "relative-path.h"
 
 #include <string.h>
 
@@ -276,4 +277,285 @@ bool raya_response_rx_make_ack(
     ack->payload = rx->ack_payload;
     ack->payload_length = sizeof(rx->ack_payload);
     return true;
+}
+
+
+static bool operation_valid(uint16_t operation)
+{
+    return operation == RAYA_OPERATION_READ_FILE ||
+        operation == RAYA_OPERATION_LIST_DIRECTORY;
+}
+
+static bool error_code_valid(uint32_t code)
+{
+    return code >= RAYA_ERROR_BAD_REQUEST && code <= RAYA_ERROR_INTERNAL;
+}
+
+static size_t bounded_string_length(const char *value, size_t maximum)
+{
+    size_t length = 0;
+    while (length < maximum && value[length] != '\0')
+        ++length;
+    return length;
+}
+
+static size_t bounded_wide_length(const wchar_t *value, size_t maximum)
+{
+    size_t length = 0;
+    while (length < maximum && value[length] != L'\0')
+        ++length;
+    return length;
+}
+
+static bool root_id_valid(const char *root_id, size_t length)
+{
+    if (root_id == NULL || length == 0 || length > RAYA_MAX_ROOT_ID_BYTES)
+        return false;
+
+    for (size_t i = 0; i < length; ++i) {
+        char ch = root_id[i];
+        if (!((ch >= 'A' && ch <= 'Z') ||
+              (ch >= 'a' && ch <= 'z') ||
+              (ch >= '0' && ch <= '9') ||
+              ch == '_' || ch == '-'))
+            return false;
+    }
+    return true;
+}
+
+static bool utf16_path_valid(const wchar_t *path, size_t length)
+{
+    size_t components = 0;
+
+    for (size_t i = 0; i < length; ++i) {
+        uint16_t code = (uint16_t)path[i];
+        if (code == 0)
+            return false;
+
+        if (code >= 0xd800u && code <= 0xdbffu) {
+            if (i + 1 >= length)
+                return false;
+            uint16_t low = (uint16_t)path[i + 1];
+            if (low < 0xdc00u || low > 0xdfffu)
+                return false;
+            ++i;
+        } else if (code >= 0xdc00u && code <= 0xdfffu) {
+            return false;
+        }
+    }
+
+    return raya_validate_relative_path(path, &components) && components != 0;
+}
+
+bool raya_request_encode_payload(
+    const raya_request *request,
+    uint8_t *payload,
+    size_t payload_capacity,
+    size_t *written)
+{
+    size_t root_length;
+    size_t path_length;
+    size_t required;
+
+    if (written != NULL)
+        *written = 0;
+
+    if (request == NULL || payload == NULL || written == NULL ||
+        !operation_valid(request->operation))
+        return false;
+
+    root_length = bounded_string_length(request->root_id,
+        RAYA_MAX_ROOT_ID_BYTES + 1u);
+    path_length = bounded_wide_length(request->relative_path,
+        RAYA_MAX_REQUEST_PATH_CHARS + 1u);
+
+    if (root_length == 0 || root_length > RAYA_MAX_ROOT_ID_BYTES ||
+        path_length > RAYA_MAX_REQUEST_PATH_CHARS ||
+        !root_id_valid(request->root_id, root_length))
+        return false;
+
+    if (request->operation == RAYA_OPERATION_READ_FILE && path_length == 0)
+        return false;
+    if (path_length != 0 &&
+        !utf16_path_valid(request->relative_path, path_length))
+        return false;
+
+    required = RAYA_REQUEST_FIXED_BYTES + root_length + path_length * 2u;
+    if (payload_capacity < required || required > RAYA_MAX_FRAME_PAYLOAD)
+        return false;
+
+    write_u16_le(payload, request->operation);
+    write_u16_le(payload + 2, (uint16_t)root_length);
+    write_u16_le(payload + 4, (uint16_t)path_length);
+    write_u16_le(payload + 6, 0);
+    memcpy(payload + RAYA_REQUEST_FIXED_BYTES, request->root_id, root_length);
+
+    for (size_t i = 0; i < path_length; ++i)
+        write_u16_le(payload + RAYA_REQUEST_FIXED_BYTES + root_length + i * 2u,
+            (uint16_t)request->relative_path[i]);
+
+    *written = required;
+    return true;
+}
+
+bool raya_request_decode_frame(
+    const raya_frame_view *frame,
+    raya_request *request)
+{
+    raya_request candidate;
+    uint16_t operation;
+    uint16_t root_length;
+    uint16_t path_length;
+    size_t expected_length;
+    const uint8_t *payload;
+
+    if (request == NULL)
+        return false;
+    memset(request, 0, sizeof(*request));
+
+    if (frame == NULL || frame->type != RAYA_FRAME_REQUEST ||
+        frame->sequence != 0 || frame->payload == NULL ||
+        frame->payload_length < RAYA_REQUEST_FIXED_BYTES)
+        return false;
+
+    payload = frame->payload;
+    operation = read_u16_le(payload);
+    root_length = read_u16_le(payload + 2);
+    path_length = read_u16_le(payload + 4);
+
+    if (!operation_valid(operation) || read_u16_le(payload + 6) != 0 ||
+        root_length == 0 || root_length > RAYA_MAX_ROOT_ID_BYTES ||
+        path_length > RAYA_MAX_REQUEST_PATH_CHARS)
+        return false;
+
+    expected_length = RAYA_REQUEST_FIXED_BYTES + (size_t)root_length +
+        (size_t)path_length * 2u;
+    if (frame->payload_length != expected_length)
+        return false;
+
+    memset(&candidate, 0, sizeof(candidate));
+    candidate.operation = operation;
+    memcpy(candidate.root_id, payload + RAYA_REQUEST_FIXED_BYTES, root_length);
+    candidate.root_id[root_length] = '\0';
+    if (!root_id_valid(candidate.root_id, root_length))
+        return false;
+
+    for (size_t i = 0; i < path_length; ++i) {
+        uint16_t code = read_u16_le(payload + RAYA_REQUEST_FIXED_BYTES +
+            root_length + i * 2u);
+        candidate.relative_path[i] = (wchar_t)code;
+    }
+    candidate.relative_path[path_length] = L'\0';
+
+    if (operation == RAYA_OPERATION_READ_FILE && path_length == 0)
+        return false;
+    if (path_length != 0 &&
+        !utf16_path_valid(candidate.relative_path, path_length))
+        return false;
+
+    *request = candidate;
+    return true;
+}
+
+bool raya_error_encode_payload(
+    const raya_error_info *error,
+    uint8_t payload[8])
+{
+    if (error == NULL || payload == NULL || !error_code_valid(error->code))
+        return false;
+
+    write_u32_le(payload, error->code);
+    payload[4] = error->retryable ? 1u : 0u;
+    payload[5] = 0;
+    payload[6] = 0;
+    payload[7] = 0;
+    return true;
+}
+
+bool raya_error_decode_frame(
+    const raya_frame_view *frame,
+    raya_error_info *error)
+{
+    raya_error_info candidate;
+
+    if (error == NULL)
+        return false;
+    error->code = 0;
+    error->retryable = false;
+
+    if (frame == NULL || frame->type != RAYA_FRAME_ERROR ||
+        frame->sequence != 0 || frame->payload == NULL ||
+        frame->payload_length != 8)
+        return false;
+
+    candidate.code = read_u32_le(frame->payload);
+    if (!error_code_valid(candidate.code) ||
+        frame->payload[4] > 1u ||
+        frame->payload[5] != 0 ||
+        frame->payload[6] != 0 ||
+        frame->payload[7] != 0)
+        return false;
+
+    candidate.retryable = frame->payload[4] != 0;
+    *error = candidate;
+    return true;
+}
+
+bool raya_error_make_ack(
+    const raya_frame_view *error_frame,
+    uint8_t ack_payload[4],
+    raya_frame_view *ack)
+{
+    raya_error_info decoded;
+
+    if (ack_payload == NULL || ack == NULL ||
+        !raya_error_decode_frame(error_frame, &decoded))
+        return false;
+
+    write_u32_le(ack_payload, error_frame->sequence);
+    ack->type = RAYA_FRAME_ACK;
+    ack->sequence = error_frame->sequence;
+    ack->payload = ack_payload;
+    ack->payload_length = sizeof(uint32_t);
+    return true;
+}
+
+bool raya_deadline_init(
+    raya_deadline *deadline,
+    uint64_t now_ms,
+    uint32_t timeout_ms)
+{
+    if (deadline == NULL || timeout_ms == 0 ||
+        now_ms > UINT64_MAX - (uint64_t)timeout_ms)
+        return false;
+
+    deadline->expires_at_ms = now_ms + (uint64_t)timeout_ms;
+    return true;
+}
+
+uint32_t raya_deadline_remaining_ms(
+    const raya_deadline *deadline,
+    uint64_t now_ms)
+{
+    uint64_t remaining;
+
+    if (deadline == NULL || now_ms >= deadline->expires_at_ms)
+        return 0;
+
+    remaining = deadline->expires_at_ms - now_ms;
+    return remaining > UINT32_MAX ? UINT32_MAX : (uint32_t)remaining;
+}
+
+uint32_t raya_deadline_frame_budget_ms(
+    const raya_deadline *deadline,
+    uint64_t now_ms,
+    uint32_t per_frame_timeout_ms)
+{
+    uint32_t remaining;
+
+    if (per_frame_timeout_ms == 0)
+        return 0;
+
+    remaining = raya_deadline_remaining_ms(deadline, now_ms);
+    return remaining < per_frame_timeout_ms ? remaining : per_frame_timeout_ms;
 }

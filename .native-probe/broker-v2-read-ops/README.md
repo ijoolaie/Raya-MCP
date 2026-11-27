@@ -46,12 +46,11 @@ separate handle-relative open and same-HANDLE revalidation.
   change which entries appear across pages; callers must not assume snapshot
   semantics or use returned names as authorization.
 - `build-directory-enumeration-tests.cmd`: 30 base assertions (plus four when
-  directory symbolic-link creation is permitted) over 1,200 files across
-  multiple pages, no duplicate/omitted names in a stable fixture, restart,
-  over-cap failure, empty-directory end, invalid handles, and directory rename
-  pinning. Directory symbolic-link creation was explicitly skipped on this host
-  because Windows returned ERROR_PRIVILEGE_NOT_HELD (1314); reparse-entry
-  reporting is therefore not claimed as runtime-verified by this test.
+  directory symbolic-link creation is permitted) over 1,200 files across multiple
+  pages, restart, over-cap failure, empty-directory end, invalid handles, and
+  directory rename pinning. Directory symbolic-link creation was explicitly
+  skipped on this host because Windows returned ERROR_PRIVILEGE_NOT_HELD (1314);
+  CI's symbolic-link-capable runner exercises reparse-entry reporting.
 
 ## Final regular-file open
 
@@ -75,16 +74,20 @@ validated again by the helper. The helper does not authorize a caller, choose a
 workspace root, or provide a complete file-operation policy. It is not yet
 integrated into Broker v2 or any application handler.
 
-## I/O cancellation and reaper experiments
+## I/O cancellation, deadlines and reaper experiments
 
 - `build-io-lifecycle-model.cmd`: pure C state-machine tests (34 assertions) for
   synchronous/pending completion, cancellation races, late completion, exactly-once
   reaping, unresolved-operation retention, registry admission caps, and shutdown admission.
+- `build-deadline-tests.cmd`: 20 deterministic assertions for one monotonic
+  request deadline, per-frame budgets capped by the remaining overall time, zero
+  timeout rejection, and overflow-safe deadline creation.
 - `build-overlapped-pipe-lifetime-tests.cmd`: disposable local named-pipe experiment
-  using real Windows overlapped ReadFile and CancelIoEx (17 assertions). It verifies
+  using real Windows overlapped ReadFile and CancelIoEx (23 assertions). It verifies
   pending-read cancellation reaches ERROR_OPERATION_ABORTED, normal completion returns
-  the exact payload, late CancelIoEx after completion returns ERROR_NOT_FOUND, and a
-  cancel/completion race reaches one terminal outcome.
+  the exact payload, late CancelIoEx after completion returns ERROR_NOT_FOUND, a
+  cancel/completion race reaches one terminal outcome, and two timed-out pending reads
+  are canceled/reaped using a shared 500 ms request deadline with 200 ms per-frame caps.
 - `build-overlapped-pipe-reaper-tests.cmd`: four independent pending named-pipe
   reads backed by heap-allocated OVERLAPPED/buffer/event/pipe-handle records
   (42 assertions). The request side requests cancellation and returns without
@@ -100,32 +103,42 @@ integrated into Broker v2 or any application handler.
   final throughput architecture decision. A production cap and whether IOCP is
   preferable remain to be determined.
 
-## Bounded read frame codec and transport experiment
+## Bounded read protocol
 
 - `read-frame.h/.c` implements the 16-byte RYA2 envelope with explicit
   little-endian field encoding; no packed-struct casts or untrusted pointer casts.
 - The decoder rejects bad magic/version/type, truncated headers/payloads, trailing
   bytes, and payloads above 16 KiB.
-- The response TX/RX state machines implement RESPONSE_HEADER, sequential DATA,
-  END, and one ACK per frame. ACKs echo the acknowledged sequence in both the ACK
-  frame header and its fixed four-byte little-endian payload.
-- The response contract enforces a 256 KiB body cap, 16 KiB maximum chunk, and no
-  more than 16 DATA frames. All DATA chunks must have the exact expected size,
-  including the final short chunk.
-- `build-read-frame-tests.cmd`: 57 pure C assertions covering wire layout,
-  malformed frames, boundaries (zero, one, one chunk, chunk plus one, exact 256 KiB),
-  ACK validation, sequencing, duplicate/stale/future ACKs, invalid ordering, and
-  terminal END behavior.
-- `build-message-pipe-frame-transport-tests.cmd`: 12 actual Windows message-mode
+- REQUEST payload: 8-byte fixed header (operation u16, rootId length u16, UTF-16
+  path code-unit length u16, reserved u16=0), followed by a 1..64-byte ASCII rootId
+  and relative UTF-16LE path. RootId syntax is [A-Za-z0-9_-]. READ_FILE requires
+  a nonempty relative path; LIST_DIRECTORY may use an empty path to list the root.
+  The parser validates UTF-16 surrogate pairs and delegates path syntax to the
+  relative-path gate.
+- RootId parsing does not bind the ID to configured ROOTS or authorize it. That
+  registry and request-scoped HANDLE lifecycle remain separate acceptance gates.
+- ERROR payload: numeric code u32, retryable u8, three reserved zero bytes. Codes
+  are BAD_REQUEST, UNKNOWN_ROOT, NOT_FOUND, ACCESS_DENIED, UNSUPPORTED_OPERATION,
+  RESOURCE_LIMIT, and INTERNAL. ERROR is a terminal sequence-zero frame and is
+  acknowledged with the matching sequence-zero ACK; no raw OS error or path is sent.
+- Response TX/RX implements RESPONSE_HEADER, sequential DATA, END, and one ACK per
+  frame. ACKs echo the acknowledged sequence in both the ACK frame header and its
+  fixed four-byte little-endian payload.
+- Response bounds: 256 KiB body, 16 KiB chunk, no more than 16 DATA frames. All
+  chunks must have the exact expected size, including the final short chunk.
+- `build-read-frame-tests.cmd`: 57 pure C assertions for wire layout, malformed
+  frames, response boundaries, ACK validation and response sequencing.
+- `build-request-error-tests.cmd`: 44 assertions for REQUEST/ERROR payload
+  contracts, rootId syntax, relative path and UTF-16 validation, reserved fields,
+  frame sequencing, error-code bounds, and terminal ERROR acknowledgement.
+- `build-message-pipe-frame-transport-tests.cmd`: 28 actual Windows message-mode
   pipe assertions. It transfers zero bytes, chunk-plus-one, and exactly 256 KiB
-  through one-message-per-frame with an ACK for each frame; it verifies
-  ERROR_MORE_DATA on a deliberately undersized read, rejects a truncated frame,
-  and fails closed on disconnect between frames.
-- The transport experiment uses synchronous test I/O and does not yet implement
-  bounded per-frame ACK timeouts, an overall request deadline, or full disconnect
-  coverage at every protocol phase. REQUEST payload schema and ERROR semantics
-  are also not implemented. Production transport must treat ERROR_MORE_DATA as
-  malformed/truncated and fail closed.
+  through one-message-per-frame with an ACK for each frame; exercises REQUEST and
+  terminal ERROR over the pipe; verifies ERROR_MORE_DATA on an undersized read,
+  rejects a truncated frame, and fails closed on disconnect between frames.
+- The message-mode transport itself is still a synchronous test harness. The
+  request/per-frame deadline calculation is tested against real overlapped pipe
+  reads, but is not yet wired into the message-frame transport/reaper.
 
 ## Test commands
 
@@ -137,22 +150,25 @@ Run from an x64 Native Tools Command Prompt:
   rejection, hard-link detection, active-handle stability after link-count change,
   and directory-junction rejection.
 - `build-directory-enumeration-tests.cmd`: HANDLE-relative multi-page directory
-  enumeration (30 base assertions; 4 additional if symlink creation is permitted).
+  enumeration (30 base assertions; four additional if symlink creation is permitted).
 - `build-io-lifecycle-model.cmd`: synthetic lifecycle model (34 assertions).
-- `build-overlapped-pipe-lifetime-tests.cmd`: actual named-pipe cancellation
-  experiment (17 assertions).
+- `build-deadline-tests.cmd`: request/per-frame deadline arithmetic (20 assertions).
+- `build-overlapped-pipe-lifetime-tests.cmd`: actual named-pipe cancellation and
+  deadline experiment (23 assertions).
 - `build-overlapped-pipe-reaper-tests.cmd`: heap-owned operation/reaper
   experiment (42 assertions).
-- `build-read-frame-tests.cmd`: bounded read-frame codec and sequence state
+- `build-read-frame-tests.cmd`: bounded read-frame codec and response state
   machine (57 assertions).
+- `build-request-error-tests.cmd`: REQUEST/ERROR payload contracts (44 assertions).
 - `build-message-pipe-frame-transport-tests.cmd`: message-mode pipe framing
-  experiment (12 assertions).
+  experiment (28 assertions).
 
 ## Not yet established
 
-This is not production acceptance. Additional work is required for bounded transport
-deadlines, REQUEST/ERROR contract, directory enumeration consistency under
-concurrent mutation, resource limits, broader adversarial race testing across
-supported Windows versions, and a decision on the residual hard-link mutation
-behavior described above. None of the native I/O or frame-codec experiments is
-integrated into the Broker service or Raya Local MCP handlers.
+This is not production acceptance. Remaining work includes wiring the deadline
+budget into the actual asynchronous message-frame transport/reaper, disconnect
+tests at every protocol phase, rootId-to-ROOTS binding, request-scoped HANDLE
+ownership, directory enumeration consistency under concurrent mutation,
+write/edit/move semantics, broader adversarial race testing, and a decision on
+the residual hard-link mutation behavior. None of the native I/O or frame-codec
+experiments is integrated into the Broker service or Raya Local MCP handlers.

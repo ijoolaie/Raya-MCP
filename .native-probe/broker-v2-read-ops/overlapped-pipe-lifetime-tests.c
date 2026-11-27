@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <wchar.h>
+#include "read-frame.h"
 
 #define CHECK(label, expression) do { \
     if (expression) { printf("PASS %s\n", label); ++passed; } \
@@ -277,6 +278,7 @@ static void test_cancel_completion_race(HANDLE server, HANDLE client)
     CloseHandle(operation.hEvent);
 }
 
+static void test_request_deadline_with_per_frame_budget(HANDLE server);
 int main(void)
 {
     HANDLE server = INVALID_HANDLE_VALUE;
@@ -292,10 +294,112 @@ int main(void)
     test_cancel_pending_read(server);
     test_normal_completion_and_late_cancel(server, client);
     test_cancel_completion_race(server, client);
+    test_request_deadline_with_per_frame_budget(server);
     CloseHandle(client);
     CloseHandle(server);
 
     printf("NAMED_PIPE_OVERLAPPED_LIFETIME: %u passed, %u failed\n",
         passed, failed);
     return failed == 0 ? 0 : 1;
+}
+
+static BOOL timeout_read_and_reap(
+    HANDLE pipe, DWORD timeout_ms, DWORD *terminal_error)
+{
+    OVERLAPPED operation;
+    BYTE buffer[16];
+    DWORD transferred = 0;
+    DWORD wait_result;
+    DWORD error = ERROR_SUCCESS;
+    BOOL read_result;
+    BOOL cancel_result;
+
+    ZeroMemory(&operation, sizeof(operation));
+    ZeroMemory(buffer, sizeof(buffer));
+    operation.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (operation.hEvent == NULL) {
+        *terminal_error = GetLastError();
+        return FALSE;
+    }
+
+    read_result = ReadFile(pipe, buffer, sizeof(buffer), &transferred, &operation);
+    if (read_result || GetLastError() != ERROR_IO_PENDING) {
+        *terminal_error = read_result ? ERROR_SUCCESS : GetLastError();
+        CloseHandle(operation.hEvent);
+        return FALSE;
+    }
+
+    wait_result = WaitForSingleObject(operation.hEvent, timeout_ms);
+    if (wait_result != WAIT_TIMEOUT) {
+        if (wait_result == WAIT_OBJECT_0) {
+            if (!GetOverlappedResult(pipe, &operation, &transferred, FALSE))
+                error = GetLastError();
+        } else {
+            error = GetLastError();
+        }
+        *terminal_error = error;
+        CloseHandle(operation.hEvent);
+        return FALSE;
+    }
+
+    cancel_result = CancelIoEx(pipe, &operation);
+    if (!cancel_result) {
+        DWORD cancel_error = GetLastError();
+        if (cancel_error != ERROR_NOT_FOUND) {
+            *terminal_error = cancel_error;
+            (void)WaitForSingleObject(operation.hEvent, INFINITE);
+            (void)GetOverlappedResult(pipe, &operation, &transferred, FALSE);
+            CloseHandle(operation.hEvent);
+            return FALSE;
+        }
+    }
+
+    /* The request deadline has expired, but ownership remains until completion. */
+    wait_result = WaitForSingleObject(operation.hEvent, INFINITE);
+    if (wait_result != WAIT_OBJECT_0) {
+        *terminal_error = GetLastError();
+        CloseHandle(operation.hEvent);
+        return FALSE;
+    }
+
+    if (GetOverlappedResult(pipe, &operation, &transferred, FALSE))
+        error = ERROR_SUCCESS;
+    else
+        error = GetLastError();
+
+    *terminal_error = error;
+    CloseHandle(operation.hEvent);
+    return error == ERROR_OPERATION_ABORTED;
+}
+
+static void test_request_deadline_with_per_frame_budget(HANDLE server)
+{
+    raya_deadline deadline;
+    uint64_t started = GetTickCount64();
+    uint32_t first_budget;
+    uint32_t second_budget;
+    DWORD first_terminal = ERROR_SUCCESS;
+    DWORD second_terminal = ERROR_SUCCESS;
+
+    CHECK("initialize 500 ms overall request deadline",
+        raya_deadline_init(&deadline, started, 500));
+    first_budget = raya_deadline_frame_budget_ms(&deadline,
+        GetTickCount64(), 200);
+    CHECK("first frame receives 200 ms cap", first_budget == 200);
+    CHECK("first pending read times out and is canceled safely",
+        timeout_read_and_reap(server, first_budget, &first_terminal) &&
+        first_terminal == ERROR_OPERATION_ABORTED);
+
+    Sleep(150);
+    second_budget = raya_deadline_frame_budget_ms(&deadline,
+        GetTickCount64(), 200);
+    CHECK("second frame budget is reduced by overall deadline",
+        second_budget > 0 && second_budget < 200);
+    CHECK("second pending read times out within remaining request budget",
+        timeout_read_and_reap(server, second_budget, &second_terminal) &&
+        second_terminal == ERROR_OPERATION_ABORTED);
+
+    CHECK("overall request deadline is not reset per frame",
+        raya_deadline_remaining_ms(&deadline, GetTickCount64()) == 0 &&
+        raya_deadline_frame_budget_ms(&deadline, GetTickCount64(), 200) == 0);
 }

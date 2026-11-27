@@ -1,6 +1,6 @@
-# Broker v2 bounded read-response framing
+# Broker v2 bounded read protocol
 
-Status: pure C frame codec, response TX/RX state machine, and disposable message-mode pipe experiment implemented and locally tested. Not integrated into Broker.
+Status: pure C frame codec, REQUEST/ERROR payload contracts, response TX/RX state machine, monotonic deadline arithmetic, and disposable message-mode pipe experiment implemented and locally tested. Not integrated into Broker.
 
 ## Wire envelope
 
@@ -15,9 +15,32 @@ Each frame has a 16-byte header followed by exactly the declared payload. Fields
 | 12 | 4 | Payload length |
 | 16 | N | Payload |
 
-Frame types are REQUEST, RESPONSE_HEADER, DATA, END, ERROR, and ACK. The codec recognizes all six values. The implemented response state machine currently handles RESPONSE_HEADER, DATA, END, and ACK; REQUEST payload validation and ERROR semantics remain unspecified.
+Frame types are REQUEST, RESPONSE_HEADER, DATA, END, ERROR, and ACK. The codec recognizes all six values.
 
-## Bounds and sequencing
+## REQUEST payload
+
+The fixed eight-byte header contains:
+- operation code (u16 LE): READ_FILE=1 or LIST_DIRECTORY=2;
+- rootId length in bytes (u16 LE);
+- relative-path length in UTF-16 code units (u16 LE);
+- reserved field (u16 LE), required to be zero.
+
+It is followed by a 1..64 byte ASCII rootId using only letters, digits, underscore, and hyphen, then the relative path as UTF-16LE. The whole payload must fit in the 16 KiB frame limit. READ_FILE requires a nonempty path; LIST_DIRECTORY may use an empty path to enumerate the configured root. UTF-16 surrogate pairs are validated and nonempty paths pass the standalone relative-path validator. REQUEST must be sequence zero.
+
+This parser only validates syntax. It does not map rootId to configured ROOTS, authorize a caller, or acquire a request-scoped root HANDLE. Those remain separate security gates.
+
+## ERROR payload
+
+ERROR is a terminal sequence-zero frame with an eight-byte payload:
+- numeric error code (u32 LE);
+- retryable flag (one byte, 0 or 1);
+- three reserved zero bytes.
+
+Defined codes: BAD_REQUEST=1, UNKNOWN_ROOT=2, NOT_FOUND=3, ACCESS_DENIED=4, UNSUPPORTED_OPERATION=5, RESOURCE_LIMIT=6, INTERNAL=7. No raw OS error code, absolute path, or sensitive path detail is sent. The client acknowledges the ERROR with an ACK whose sequence and four-byte payload both echo zero; the connection can then close.
+
+The parser enforces code bounds, retryable flag, reserved bytes, type and sequence. Mapping real Windows failures into these categories remains an integration responsibility.
+
+## Response bounds and sequencing
 
 - Maximum response body: 262,144 bytes (256 KiB).
 - Maximum DATA payload: 16,384 bytes (16 KiB).
@@ -28,30 +51,30 @@ Frame types are REQUEST, RESPONSE_HEADER, DATA, END, ERROR, and ACK. The codec r
 - Every response frame has a sequence starting at zero and incrementing by one. The receiver rejects gaps, duplicates, reordered frames, data before header, early END, duplicate END, and frames after END.
 - The sender permits only one outstanding frame. It waits for an ACK matching that frame before emitting the next one.
 - ACK uses the acknowledged sequence in its header and a fixed four-byte little-endian payload containing the same sequence. Stale, future, duplicate, truncated, or non-ACK acknowledgements are rejected.
-- The receiver exposes payload as a view into the decoded wire buffer. A future transport must consume/copy it before reusing that buffer.
+
+## Deadline model
+
+A request deadline is created once from a monotonic millisecond timestamp. Each frame's wait budget is the smaller of its per-frame cap and the remaining request-wide time. The budget is never reset for the next frame. Zero timeouts and timestamp overflow are rejected.
+
+`deadline-tests.c` has 20 deterministic assertions. The overlapped named-pipe test also performs two pending reads under one 500 ms request deadline and 200 ms per-frame caps: the first read times out and is canceled, the second receives only the remaining budget, and both OVERLAPPED/event/buffer lifetimes remain valid until cancellation completion is observed.
+
+The deadline arithmetic is not yet wired into the synchronous message-mode frame transport or a production asynchronous reaper. A future transport must apply the budget to each ACK read and to the request-wide operation without releasing resources at timeout.
 
 ## Implemented test coverage
 
-`read-frame.c` implements bytewise encoding/decoding and a pure response TX/RX state machine. `read-frame-tests.c` currently has 57 passing assertions, covering exact wire layout, malformed frames, size boundaries, the 16-frame ceiling, ACK validation, sequence/order errors, and terminal END behavior.
-
-`message-pipe-frame-transport-tests.c` adds 12 assertions using real Windows message-mode named pipes:
-
-- Full one-message-per-frame transfers for zero bytes, chunk-plus-one, and exactly 256 KiB.
-- ACK round-trip after every response frame.
-- A short message-mode read returns `ERROR_MORE_DATA` and is rejected.
-- A complete pipe message containing a truncated frame is rejected by the codec.
-- A peer disconnect between frames fails closed.
-
-The transport test uses synchronous I/O in a disposable local process. It does not yet implement bounded per-frame ACK deadlines or an overall request deadline, and it does not cover disconnect at every protocol phase.
+- `read-frame-tests.c`: 57 pure C assertions for byte layout, malformed frames, size boundaries, the 16-frame ceiling, ACK validation, sequencing and END.
+- `request-error-tests.c`: 44 assertions for REQUEST and ERROR schemas, rootId syntax, UTF-16/path validation, reserved fields, malformed payloads, error-code bounds, and terminal ERROR ACK.
+- `message-pipe-frame-transport-tests.c`: 28 assertions using real Windows message-mode named pipes. Full transfers cover zero bytes, chunk-plus-one, and exactly 256 KiB. REQUEST and terminal ERROR are sent over the pipe with an ACK. A deliberately short read returns `ERROR_MORE_DATA`; a truncated frame is rejected; disconnect between frames fails closed.
+- `overlapped-pipe-lifetime-tests.c`: 23 assertions for pending cancellation, normal completion, cancel/completion race, late cancellation, and request-wide/per-frame deadline interaction with actual overlapped pipe reads.
+- `io-lifecycle-model-tests.c` and `overlapped-pipe-reaper-tests.c`: 34 and 42 assertions respectively for state transitions and heap-owned completion reaping.
 
 ## Required remaining transport work
 
-1. Add bounded per-frame ACK deadlines and one overall request deadline; do not reset an unlimited timeout for each chunk.
+1. Wire the request/per-frame deadline budget into actual asynchronous message-frame reads and ACK waits, using the tested cancellation/reaper ownership model.
 2. Test disconnect before header ACK, between chunks, during final ACK, and after END.
-3. Test malformed messages and transport errors using actual message-mode pipes.
-4. Define REQUEST payload schema and ERROR numeric-code semantics without raw OS paths or sensitive details.
-5. Validate the async transport against the cancellation/reaper ownership model and supported Windows versions.
-6. Integrate only after the native transport, deadlines, and cancellation/reaper tests pass.
+3. Validate asynchronous transport ownership against supported Windows versions.
+4. Map Windows failures to the defined ERROR categories without leaking raw paths or sensitive details.
+5. Bind rootId to configured ROOTS and enforce request-scoped HANDLE lifetime before filesystem dispatch.
 
 ## Relationship to filesystem security
 

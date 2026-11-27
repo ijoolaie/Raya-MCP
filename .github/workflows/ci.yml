@@ -41,6 +41,10 @@ jobs:
         shell: cmd
         run: .native-probe/broker-v2-read-ops/build-io-lifecycle-model.cmd
 
+      - name: Build and test request and per-frame overlapped I/O deadlines
+        shell: cmd
+        run: .native-probe/broker-v2-read-ops/build-deadline-tests.cmd
+
       - name: Build and test disposable named-pipe overlapped cancellation
         shell: cmd
         run: .native-probe/broker-v2-read-ops/build-overlapped-pipe-lifetime-tests.cmd
@@ -52,6 +56,10 @@ jobs:
       - name: Build and test bounded read frame codec and sequence state
         shell: cmd
         run: .native-probe/broker-v2-read-ops/build-read-frame-tests.cmd
+
+      - name: Build and test REQUEST and ERROR payload contracts
+        shell: cmd
+        run: .native-probe/broker-v2-read-ops/build-request-error-tests.cmd
 
       - name: Build and test message-mode named-pipe frame transport
         shell: cmd

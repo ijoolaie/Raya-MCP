@@ -274,6 +274,7 @@ static void test_disconnect_between_frames(void)
     CloseHandle(server);
 }
 
+static void test_request_error_roundtrip_over_message_pipe(void);
 int main(void)
 {
     printf("MESSAGE_PIPE_FRAME_TRANSPORT_TEST_BEGIN\n");
@@ -281,8 +282,108 @@ int main(void)
     test_error_more_data_is_rejected();
     test_truncated_frame_is_rejected();
     test_disconnect_between_frames();
+    test_request_error_roundtrip_over_message_pipe();
 
     printf("MESSAGE_PIPE_FRAME_TRANSPORT: %u passed, %u failed\n",
         passed, failed);
     return failed == 0 ? 0 : 1;
+}
+
+static void test_request_error_roundtrip_over_message_pipe(void)
+{
+    HANDLE server = INVALID_HANDLE_VALUE;
+    HANDLE client = INVALID_HANDLE_VALUE;
+    uint8_t request_payload[RAYA_MAX_FRAME_PAYLOAD];
+    uint8_t error_payload[8];
+    uint8_t ack_payload[4];
+    uint8_t wire[RAYA_FRAME_WIRE_CAPACITY];
+    uint8_t incoming[RAYA_FRAME_WIRE_CAPACITY];
+    uint8_t ack_wire[RAYA_FRAME_HEADER_SIZE + 4u];
+    size_t payload_length = 0;
+    size_t wire_length = 0;
+    size_t ack_length = 0;
+    DWORD received = 0;
+    DWORD io_error = ERROR_SUCCESS;
+    raya_request request;
+    raya_request decoded_request;
+    raya_error_info error = { RAYA_ERROR_ACCESS_DENIED, false };
+    raya_error_info decoded_error;
+    raya_frame_view frame;
+    raya_frame_view decoded;
+    raya_frame_view ack;
+
+    memset(&request, 0, sizeof(request));
+    request.operation = RAYA_OPERATION_READ_FILE;
+    strcpy_s(request.root_id, sizeof(request.root_id), "fixture");
+    wcscpy_s(request.relative_path,
+        RAYA_MAX_REQUEST_PATH_CHARS + 1u, L"docs\\private.txt");
+
+    CHECK("create pipe pair for REQUEST/ERROR contract",
+        create_message_pipe_pair(&server, &client, 7));
+    if (server == INVALID_HANDLE_VALUE || client == INVALID_HANDLE_VALUE)
+        return;
+
+    CHECK("encode REQUEST payload",
+        raya_request_encode_payload(&request, request_payload,
+            sizeof(request_payload), &payload_length));
+    if (payload_length == 0)
+        goto done;
+
+    frame = (raya_frame_view){
+        RAYA_FRAME_REQUEST, 0, request_payload, (uint32_t)payload_length
+    };
+    CHECK("encode REQUEST frame",
+        raya_frame_encode(&frame, wire, sizeof(wire), &wire_length));
+    if (wire_length == 0)
+        goto done;
+    CHECK("send REQUEST as one pipe message",
+        write_message(client, wire, (DWORD)wire_length));
+    if (!read_message(server, incoming, sizeof(incoming), &received, &io_error)) {
+        CHECK("receive REQUEST message", FALSE);
+        goto done;
+    }
+    CHECK("decode REQUEST frame from message",
+        raya_frame_decode(incoming, received, &decoded));
+    CHECK("validate REQUEST schema from message",
+        raya_request_decode_frame(&decoded, &decoded_request));
+    CHECK("REQUEST preserves rootId and relative path",
+        strcmp(decoded_request.root_id, "fixture") == 0 &&
+        wcscmp(decoded_request.relative_path, L"docs\\private.txt") == 0);
+
+    CHECK("encode terminal ACCESS_DENIED payload",
+        raya_error_encode_payload(&error, error_payload));
+    frame = (raya_frame_view){ RAYA_FRAME_ERROR, 0, error_payload, sizeof(error_payload) };
+    CHECK("encode terminal ERROR frame",
+        raya_frame_encode(&frame, wire, sizeof(wire), &wire_length));
+    CHECK("send ERROR as one pipe message",
+        write_message(server, wire, (DWORD)wire_length));
+    if (!read_message(client, incoming, sizeof(incoming), &received, &io_error)) {
+        CHECK("receive ERROR message", FALSE);
+        goto done;
+    }
+    CHECK("decode ERROR frame from message",
+        raya_frame_decode(incoming, received, &decoded));
+    CHECK("validate ERROR numeric contract",
+        raya_error_decode_frame(&decoded, &decoded_error) &&
+        decoded_error.code == RAYA_ERROR_ACCESS_DENIED &&
+        !decoded_error.retryable);
+
+    CHECK("construct ACK for terminal ERROR",
+        raya_error_make_ack(&decoded, ack_payload, &ack));
+    CHECK("encode ACK for terminal ERROR",
+        raya_frame_encode(&ack, ack_wire, sizeof(ack_wire), &ack_length));
+    CHECK("send ERROR ACK as one pipe message",
+        write_message(client, ack_wire, (DWORD)ack_length));
+    if (!read_message(server, incoming, sizeof(incoming), &received, &io_error)) {
+        CHECK("receive ERROR ACK message", FALSE);
+        goto done;
+    }
+    CHECK("server receives matching ERROR ACK",
+        raya_frame_decode(incoming, received, &decoded) &&
+        decoded.type == RAYA_FRAME_ACK && decoded.sequence == 0 &&
+        decoded.payload_length == 4 && decoded.payload[0] == 0);
+
+done:
+    CloseHandle(client);
+    CloseHandle(server);
 }
