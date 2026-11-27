@@ -47,11 +47,13 @@ set "OUT_DIR=%SCRIPT_DIR%build\Release"
 if not exist "%OUT_DIR%" mkdir "%OUT_DIR%"
 pushd "%SCRIPT_DIR%"
 cl.exe /nologo /W4 /LD /I "%NODE_INCLUDE_DIR%" /DNODE_GYP_MODULE_NAME=napi_probe /Fo"%OUT_DIR%\dircreate_pinned.obj" handle-relative-probe-phase1-dircreate-pinned.c /link /LIBPATH:"%NODE_LIB_DIR%" node.lib /OUT:"%OUT_DIR%\napi_probe_raya_phase1_dircreate_pinned.node"
-if errorlevel 1 (
-  popd
-  exit /b %errorlevel%
-)
+if errorlevel 1 goto :build_failed
 cl.exe /nologo /W4 /LD /I "%NODE_INCLUDE_DIR%" /DNODE_GYP_MODULE_NAME=napi_probe /Fo"%OUT_DIR%\hardlink_guard.obj" handle-relative-hardlink-guard.c /link /LIBPATH:"%NODE_LIB_DIR%" node.lib /OUT:"%OUT_DIR%\napi_probe_raya_phase1_hardlink_guard.node"
+if errorlevel 1 goto :build_failed
+popd
+exit /b 0
+
+:build_failed
 set "BUILD_RESULT=%errorlevel%"
 popd
 exit /b %BUILD_RESULT%
