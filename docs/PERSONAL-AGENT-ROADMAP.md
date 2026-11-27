@@ -73,6 +73,10 @@ Treat page text, files, emails, and tool output as untrusted data, not as instru
 - Keep the native filesystem prototype isolated until its acceptance gate is complete.
 
 ### Phase 1 — Filesystem confinement (blocking prerequisite)
+
+**Source-to-contract audit — 2026-11-27:** the current `main` handlers were compared with the accepted handle-relative / strict single-link contract. All 15 registered filesystem operations/modes remain **NOT ACCEPTED** for confinement: `workspace_roots`, `workspace_list`, `file_read`, `file_read_chunk`, `file_write`, `file_write_chunk`, `create_directory`, `get_file_info`, `read_multiple_files`, `list_directory`, `move_file`, `edit_block`, `start_search` filename mode, `start_search` content mode, and `read_file_tail`. The primary gaps are path-based check/use races, missing same-HANDLE type/reparse/link-count validation, path-based enumeration, and the absence of accepted identity-safe rename/edit semantics. This is a source-to-contract assessment, not a claim that every operation is exploitable under every schedule. It does not change production code or the Phase 1 gate.
+
+- Complete root identity binding and request-scoped handle lifecycle.
 - Complete root identity binding and request-scoped handle lifecycle.
 - Resolve the strict hard-link alias policy with an explicit documented decision.
 - Complete operation-family race/cleanup tests for read, write, create, directory, metadata, search/enumeration, rename/move, and delete/publish as applicable.
