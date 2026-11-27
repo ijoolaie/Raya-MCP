@@ -29,6 +29,10 @@ jobs:
         shell: cmd
         run: .native-probe/broker-v2-read-ops/build-and-test.cmd
 
+      - name: Build and test Broker v2 HANDLE-relative directory chain
+        shell: cmd
+        run: .native-probe/broker-v2-read-ops/build-handle-chain-tests.cmd
+
       - name: Set up Node.js
         uses: actions/setup-node@v5
         with:
