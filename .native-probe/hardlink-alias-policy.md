@@ -43,3 +43,7 @@ This is promising evidence for a conservative single-link policy on the tested N
 - The experimental adapter covers `readChildFromParent`, `inspectChildFromParent` and `openRelative` only. Directory metadata enumeration, other read adapters, rename/move, write/publish, recursive create and all Production handlers require separate review.
 
 **Status:** experimental candidate only. Do not merge into Production or mark Phase 1 accepted. Keep the original outside-root escape and live ACL-denial gates open. The existing uncommitted `.native-probe/hardlink-sharing-experiment.c` was not touched.
+
+## Additional isolated revalidation — 2026-11-27
+
+Rebuilt both test addons from this branch on a clean isolated Windows checkout using Node.js 22.23.2 x64 and Visual Studio 2026 Build Tools 18.7.3. The portable build script exited 0 and the hard-link harness exited 0. It confirmed that hard-link creation can succeed while the read HANDLE is held, while the pre-read link-count check rejects the read; rename and removal of the in-root alias were blocked with `EBUSY`. Single-link reads succeeded, pre-existing multi-link files and outside-backed aliases were rejected, and native HANDLE count returned to baseline. The disposable fixture was removed. This is one-host characterization, not a race-free proof or Production acceptance.
