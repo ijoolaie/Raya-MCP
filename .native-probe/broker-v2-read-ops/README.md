@@ -23,13 +23,17 @@ stream syntax, and reserved DOS device names. It is a lexical check only.
 - A READ_FILE request resolves its rootId, opens parent components relative to the
   pinned root, opens the final regular file relative to the pinned parent, and
   transfers ownership of the final file HANDLE to the request context.
-- A LIST_DIRECTORY request resolves its rootId and pins the requested directory
+- GET_FILE_INFO, READ_FILE_CHUNK and READ_FILE_TAIL use the same final-file
+  HANDLE path. Chunk reads use a checked 64-bit offset and exact bounded length;
+  tail reads return up to the requested final bytes; metadata is read from the
+  same validated HANDLE. NtReadFile uses an explicit byte offset, avoiding a
+  mutable shared file pointer; per-context I/O and close are serialized.- A LIST_DIRECTORY request resolves its rootId and pins the requested directory
   through the HANDLE chain; an empty relative path binds to the configured root.
 - Active request contexts hold a registry reference. Shutdown returns ERROR_BUSY
   until all contexts close. A context closes its file and directory-chain HANDLEs
   before releasing the registry reference.
 - `build-root-registry-context-tests.cmd`: 63 assertions for two-root binding,
-  read/list dispatch, root-level and nested file opens, unknown root rejection,
+  read/list dispatch, root-level and nested file opens, GET_FILE_INFO, chunk/tail reads, metadata, invalid ranges, unknown root rejection,
   invalid paths, size cap, directory-vs-file rejection, context close/double-close,
   shutdown while active, root namespace pinning, and atomic invalid-config rejection.
   Configured-root symbolic-link creation is explicitly skipped locally when
@@ -171,6 +175,11 @@ the final product policy remains an explicit security acceptance question.
   request/per-frame deadline calculation is tested against real overlapped reads,
   but is not yet wired into the message-frame transport/reaper.
 
+## Overlapped message-mode reads
+
+overlapped-message-frame-tests.c adds a real Windows message-mode pipe experiment with FILE_FLAG_OVERLAPPED. It reads an ACK frame using a single monotonic request deadline and per-frame cap, cancels timed-out reads, and does not release the stack OVERLAPPED/event/buffer until terminal completion is observed. It also covers a delayed successful ACK, a second read using only the remaining shared request budget, ERROR_MORE_DATA from a short message buffer, and peer disconnect. The test is deliberately synchronous at the ownership boundary: timeout cancellation is drained before the helper returns. It is not yet a persistent production reaper or a complete asynchronous frame transport.
+
+- build-overlapped-message-frame-tests.cmd: 27 assertions for overlapped message-mode ACK reads, deadline sharing, cancellation completion, ERROR_MORE_DATA and disconnect.
 ## Test commands
 
 Run from an x64 Native Tools Command Prompt:
@@ -196,13 +205,15 @@ Run from an x64 Native Tools Command Prompt:
 - `build-request-error-tests.cmd`: REQUEST/ERROR payload contracts (62 assertions), including five read-only operation schemas and offset/length bounds.
 - `build-message-pipe-frame-transport-tests.cmd`: message-mode pipe framing
   experiment (109 assertions), including end-to-end READ_FILE and disconnects at four protocol phases.
+- build-overlapped-message-frame-tests.cmd: overlapped message-mode ACK/deadline
+  experiment (27 assertions).
 
 ## Not yet established
 
 This is not production acceptance. The root registry is test-only and does not
 validate owner/DACL or authenticate callers. Remaining work includes wiring the
-deadline budget into the actual asynchronous message-frame transport/reaper,
-disconnect tests at every protocol phase, production root configuration and
+persistent heap-owned reaper ownership and full asynchronous frame/ACK integration,
+broader async disconnect/cancellation races, production root configuration and
 request identity binding, directory enumeration consistency under concurrent
 mutation, write/edit/move semantics, broader adversarial race testing, and a
 decision on the residual hard-link mutation behavior. None of the native I/O,

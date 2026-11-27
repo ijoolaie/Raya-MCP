@@ -303,3 +303,19 @@ This does not constitute production integration: the message-frame transport is 
 GitHub Actions run #59 completed green for the preceding head ae0ea46. Run #60 (ID 45971616128) is queued for latest head d6a896675f1500a3834879bbed64a68efd43228d.
 
 Phase 1 remains IN PROGRESS / NOT ACCEPTED. All 15 production filesystem operations/modes remain unaccepted.
+
+## 2026-11-27 read-only operation expansion
+
+The test-only REQUEST contract now has five read-only operation codes: READ_FILE, LIST_DIRECTORY, GET_FILE_INFO, READ_FILE_CHUNK and READ_FILE_TAIL. The fixed payload header is 20 bytes and carries a checked 64-bit byte offset plus a bounded 32-bit length. The request context reads file contents with NtReadFile and an explicit offset on the same validated HANDLE; GET_FILE_INFO queries metadata from that same HANDLE. Per-context read/metadata calls are serialized; the caller must stop and join all context users before close. Out-of-range chunks are rejected before a context is returned; tail reads return up to the requested suffix.
+
+Current local evidence: REQUEST/ERROR tests 62; configured root/request context tests 63; message-mode end-to-end transport 109; overlapped message-mode deadline/cancellation reads 27; all twelve native commands pass. This remains isolated research, not production integration.
+
+Not yet covered: workspace_roots/workspace_list, read_multiple_files, filename/content search, write/edit/create/move operations, production root owner/DACL/client identity enforcement, and a persistent heap-owned reaper wired into the full asynchronous framed transport. The overlapped message-mode experiment drains cancellation before returning but still blocks the caller until completion. Phase 1 remains IN PROGRESS / NOT ACCEPTED; all 15 production filesystem operations/modes remain unaccepted.
+
+## 2026-11-27 overlapped message-mode ACK experiment
+
+A separate test harness now applies the monotonic request deadline and per-frame cap to real overlapped message-mode pipe reads. It validates successful framed ACK receipt, a timeout followed by CancelIoEx and terminal completion drain, a second frame constrained by the remaining request budget, ERROR_MORE_DATA and peer disconnect. The test has 27 assertions and is included in the local twelve-command suite.
+
+This does not complete asynchronous transport: the full response TX/RX loop is still synchronous, and the test helper waits without a deadline after cancellation to preserve stack OVERLAPPED/event/buffer lifetime. Production integration needs heap-owned operation records and a persistent reaper.
+
+CI run #63 for d74c23c is fully green. The new helper and its CI step are being added in the next isolated commit. Phase 1 remains IN PROGRESS / NOT ACCEPTED.

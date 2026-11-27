@@ -60,12 +60,12 @@ A request deadline is created once from a monotonic millisecond timestamp. Each 
 
 `deadline-tests.c` has 20 deterministic assertions. The overlapped named-pipe test also performs two pending reads under one 500 ms request deadline and 200 ms per-frame caps: the first read times out and is canceled, the second receives only the remaining budget, and both OVERLAPPED/event/buffer lifetimes remain valid until cancellation completion is observed.
 
-The deadline arithmetic is not yet wired into the synchronous message-mode frame transport or a production asynchronous reaper. A future transport must apply the budget to each ACK read and to the request-wide operation without releasing resources at timeout.
+The new overlapped-message-frame-tests.c experiment applies the request/per-frame budget to actual message-mode ACK reads. On timeout it requests cancellation and drains terminal completion before releasing the OVERLAPPED/event/buffer. This is safe but the caller remains blocked until completion; it is not a persistent production reaper and is not yet integrated into the full framed TX/RX loop.
 
 ## Implemented test coverage
 
 - `read-frame-tests.c`: 57 pure C assertions for byte layout, malformed frames, size boundaries, the 16-frame ceiling, ACK validation, sequencing and END.
-- `request-error-tests.c`: 44 assertions for REQUEST and ERROR schemas, rootId syntax, UTF-16/path validation, reserved fields, malformed payloads, error-code bounds, and terminal ERROR ACK.
+- `request-error-tests.c`: 62 assertions for REQUEST and ERROR schemas, rootId syntax, UTF-16/path validation, reserved fields, malformed payloads, error-code bounds, and terminal ERROR ACK.
 - message-pipe-frame-transport-tests.c: 109 assertions using real Windows
   message-mode named pipes. Full transfers cover zero bytes, chunk-plus-one, and
   exactly 256 KiB. REQUEST and terminal ERROR are sent over the pipe with an ACK.
@@ -78,8 +78,8 @@ The deadline arithmetic is not yet wired into the synchronous message-mode frame
 
 ## Required remaining transport work
 
-1. Wire the request/per-frame deadline budget into actual asynchronous message-frame reads and ACK waits, using the tested cancellation/reaper ownership model.
-2. Disconnect behavior is now covered before header ACK, between DATA frames, during final END ACK, and after END. Add stress/reconnect and cancellation-race coverage to the async implementation.
+1. Move the overlapped message-frame deadline/cancellation helper to heap-owned operation records and a persistent reaper so the request can return without freeing pending I/O resources; then wire it into every framed ACK wait.
+2. Disconnect behavior is covered in the synchronous frame harness at four major phases and in the overlapped message-read experiment. Add stress/reconnect and cancellation-race coverage to the asynchronous implementation.
 3. Validate asynchronous transport ownership against supported Windows versions.
 4. Map Windows failures to the defined ERROR categories without leaking raw paths or sensitive details.
 5. Bind rootId to configured ROOTS and enforce request-scoped HANDLE lifetime before filesystem dispatch.
@@ -90,7 +90,7 @@ The deadline arithmetic is not yet wired into the synchronous message-mode frame
 
 A decoded file request resolves rootId, opens the parent directory chain relative to the retained root HANDLE, then opens the final regular file relative to that pinned parent. READ_FILE, GET_FILE_INFO, READ_FILE_CHUNK and READ_FILE_TAIL all operate on the same validated final-file HANDLE. READ_FILE_CHUNK uses an exact in-file byte range; READ_FILE_TAIL returns up to the requested final bytes; GET_FILE_INFO reads metadata from the same HANDLE. LIST_DIRECTORY resolves the rootId and pins the requested directory; an empty relative path means the configured root. Every request holds an active registry reference. Registry shutdown returns `ERROR_BUSY` until all request contexts close. A context closes its owned file and directory-chain HANDLEs before releasing the reference.
 
-The 65-assertion test covers two distinct configured roots, rootId selection, READ_FILE, LIST_DIRECTORY, GET_FILE_INFO, READ_FILE_CHUNK and READ_FILE_TAIL, root-level and nested paths, invalid ranges, size caps, directory-as-file rejection, context cleanup, active-context shutdown refusal, root namespace pinning, and invalid/duplicate configuration. Configured-root symbolic-link creation is skipped locally when privilege is unavailable; CI runs the reparse-root rejection case.
+The 63-assertion test covers two distinct configured roots, rootId selection, READ_FILE, LIST_DIRECTORY, GET_FILE_INFO, READ_FILE_CHUNK and READ_FILE_TAIL, root-level and nested paths, invalid ranges, size caps, directory-as-file rejection, context cleanup, active-context shutdown refusal, root namespace pinning, and invalid/duplicate configuration. Configured-root symbolic-link creation is skipped locally when privilege is unavailable; CI runs the reparse-root rejection case.
 
 This is not a production root registry. It does not validate root owner/DACL, authenticate the client, load the actual application ROOTS configuration, or integrate with Node handlers. The configured paths are trusted test configuration, not request input.
 ## Relationship to filesystem security

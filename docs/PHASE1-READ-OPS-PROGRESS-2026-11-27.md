@@ -24,12 +24,12 @@ All file operations resolve rootId against trusted test configuration, pin paren
 
 ## Local validation
 
-All eleven native build/test commands passed locally on Windows x64/MSVC after the latest changes:
+All twelve native build/test commands passed locally on Windows x64/MSVC after the latest changes:
 
 - relative-path gate: 25
 - HANDLE chain/final-file tests: passed; local file-symlink creation unavailable and explicitly skipped
 - directory enumeration: 30
-- configured root/request context: 65
+- configured root/request context: 63
 - I/O lifecycle model: 34
 - deadline arithmetic: 20
 - overlapped pipe cancellation/deadlines: 23
@@ -37,15 +37,16 @@ All eleven native build/test commands passed locally on Windows x64/MSVC after t
 - frame codec/state machine: 57
 - REQUEST/ERROR contracts: 62
 - message-mode frame transport: 109
+- overlapped message-mode frame reads: 27
 
-The local host returned ERROR_PRIVILEGE_NOT_HELD (1314) for some symbolic-link fixture creation. Those cases remain SKIP, not PASS. GitHub Actions run #62 (ID 45972087376) is fully green for the preceding head 0d6125885286a6c9f8310c530752132cb66c94b1.
+The local host returned ERROR_PRIVILEGE_NOT_HELD (1314) for some symbolic-link fixture creation. Those cases remain SKIP, not PASS. GitHub Actions run #62 (ID 45972087376) is fully green for preceding head 0d6125885286a6c9f8310c530752132cb66c94b1. Run #63 (ID 45973916065) for d74c23c completed fully green, including all native steps, npm audit, syntax checks, modular verification and MCP tests.
 
 ## Security and implementation boundaries still open
 
 1. The NumberOfLinks == 1 check is only an admission-time observation. Windows permits a hard link to be added afterward while the existing HANDLE remains open. This remains a security acceptance decision.
 2. Directory enumeration is not snapshot-consistent under concurrent child mutation.
 3. The test-only root registry does not validate root owner/DACL, authenticate the client, or load production ROOTS.
-4. Deadline arithmetic, overlapped cancellation, and reaper ownership are tested separately, but deadlines are not wired into asynchronous framed message/ACK I/O. The message-mode framed transport remains synchronous.
+4. Deadline arithmetic, overlapped cancellation and reaper ownership are tested separately. A new overlapped message-mode ACK-read experiment applies a request-wide deadline and per-frame cap, then drains cancellation before releasing the OVERLAPPED/event/buffer. The full framed transport is still synchronous and this helper is not yet wired into its complete TX/RX loop. The message-mode framed transport remains synchronous.
 5. Disconnects are covered at four major response phases, but partial-write, REQUEST/ERROR and asynchronous cancellation/reconnect matrices remain incomplete.
 6. Only this read-only subset has test-only native request-context implementations. Write, edit, move, rename, delete, directory creation, search, and other registered production modes remain unaccepted.
 7. Nothing is integrated into Broker service or Raya Local MCP production handlers.
