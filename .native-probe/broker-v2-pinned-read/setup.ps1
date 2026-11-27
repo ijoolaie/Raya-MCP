@@ -2,6 +2,7 @@ $ErrorActionPreference = 'Stop'
 $svc = 'RayaFsBrokerV2Probe20261127'
 $root = 'C:\ProgramData\RayaFsBrokerV2Probe-20261127'
 $rootOld = 'C:\ProgramData\RayaFsBrokerV2Probe-20261127-original'
+$configRoot = 'C:\ProgramData\RayaFsBrokerV2ProbeConfig-20261127'
 $bin = 'C:\ProgramData\RayaFsBrokerV2ProbeBin-20261127'
 $work = Split-Path -Parent $MyInvocation.MyCommand.Path
 $exe = Join-Path $work 'broker-v2.exe'
@@ -9,7 +10,7 @@ $config = Join-Path $work 'configure-virtual-service-account.exe'
 $security = Join-Path $work 'broker-v2-security-negative.exe'
 
 if (Get-Service -Name $svc -ErrorAction SilentlyContinue) { throw 'Disposable v2 service already exists; refusing to overwrite.' }
-if ((Test-Path -LiteralPath $root) -or (Test-Path -LiteralPath $rootOld) -or (Test-Path -LiteralPath $bin)) {
+if ((Test-Path -LiteralPath $root) -or (Test-Path -LiteralPath $rootOld) -or (Test-Path -LiteralPath $configRoot) -or (Test-Path -LiteralPath $bin)) {
   throw 'Disposable v2 root/image path already exists; refusing to overwrite.'
 }
 if (!(Test-Path -LiteralPath $exe) -or !(Test-Path -LiteralPath $config) -or !(Test-Path -LiteralPath $security)) {
@@ -46,6 +47,23 @@ try {
   & $exe --client-test
   if ($LASTEXITCODE -ne 0) { throw "initial Broker v2 protocol suite failed: $LASTEXITCODE" }
 
+  # The independent policy directory must reject an over-broad DACL as well.
+  Stop-Service -Name $svc
+  (Get-Service -Name $svc).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(20))
+  & icacls.exe $configRoot /grant '*S-1-1-0:(OI)(CI)(M)'
+  if ($LASTEXITCODE -ne 0) { throw "could not install deliberately broad config ACE: $LASTEXITCODE" }
+  & sc.exe start $svc | Out-Null
+  Start-Sleep -Seconds 2
+  if ((Get-Service -Name $svc).Status -ne 'Stopped') {
+    throw 'Broker accepted a config DACL containing an Everyone Modify ACE.'
+  }
+  Write-Output 'PASS over-broad independent config DACL rejected'
+  & icacls.exe $configRoot /remove:g '*S-1-1-0'
+  if ($LASTEXITCODE -ne 0) { throw "could not remove deliberately broad config ACE: $LASTEXITCODE" }
+  Start-Service -Name $svc
+  (Get-Service -Name $svc).WaitForStatus('Running', [TimeSpan]::FromSeconds(20))
+  & $exe --client-test
+  if ($LASTEXITCODE -ne 0) { throw "Broker v2 protocol suite failed after restoring exact config DACL: $LASTEXITCODE" }
   # The broker must reject a protected but over-broad DACL, not merely check
   # that the DACL is present and marked protected.
   Stop-Service -Name $svc

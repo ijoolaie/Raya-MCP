@@ -16,6 +16,7 @@ if ($service) {
 $fixturePaths = @(
   'C:\ProgramData\RayaFsBrokerV2Probe-20261127',
   'C:\ProgramData\RayaFsBrokerV2Probe-20261127-original',
+  'C:\ProgramData\RayaFsBrokerV2ProbeConfig-20261127',
   'C:\ProgramData\RayaFsBrokerV2ProbeBin-20261127'
 )
 $hasFixture = $false
@@ -33,6 +34,7 @@ $procs = Get-CimInstance Win32_Process -Filter "Name='broker-v2.exe'" | Where-Ob
 $paths = @(
   'C:\ProgramData\RayaFsBrokerV2Probe-20261127',
   'C:\ProgramData\RayaFsBrokerV2Probe-20261127-original',
+  'C:\ProgramData\RayaFsBrokerV2ProbeConfig-20261127',
   'C:\ProgramData\RayaFsBrokerV2ProbeBin-20261127'
 )
 if ($service) { throw 'Disposable v2 service still registered.' }

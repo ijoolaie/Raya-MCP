@@ -17,9 +17,9 @@
 #define ROOT_PATH L"C:\\ProgramData\\RayaFsBrokerV2Probe-20261127"
 #define ROOT_OLD_PATH L"C:\\ProgramData\\RayaFsBrokerV2Probe-20261127-original"
 #define OLD_PAYLOAD_PATH ROOT_OLD_PATH L"\\payload.txt"
-#define OLD_POLICY_PATH ROOT_OLD_PATH L"\\client.policy"
 #define PAYLOAD_PATH ROOT_PATH L"\\payload.txt"
-#define POLICY_PATH ROOT_PATH L"\\client.policy"
+#define CONFIG_PATH L"C:\\ProgramData\\RayaFsBrokerV2ProbeConfig-20261127"
+#define POLICY_PATH CONFIG_PATH L"\\client.policy"
 #define BIN_PATH L"C:\\ProgramData\\RayaFsBrokerV2ProbeBin-20261127"
 #define BIN_EXE_PATH BIN_PATH L"\\broker-v2.exe"
 #define PIPE_NAME L"\\\\.\\pipe\\RayaFsBrokerV2PipeProbe20261127"
@@ -31,6 +31,7 @@ static SERVICE_STATUS g_status;
 static HANDLE g_stop_event;
 static HANDLE g_service_thread;
 static HANDLE g_root_handle = INVALID_HANDLE_VALUE;
+static HANDLE g_config_handle = INVALID_HANDLE_VALUE;
 
 static void err(const wchar_t *where, DWORD e) {
     fwprintf(stderr, L"%ls: %lu\n", where, e);
@@ -157,6 +158,38 @@ static BOOL write_file_secure(const wchar_t *path,const void *data,DWORD size,SE
     DWORD n=0;BOOL ok=WriteFile(h,data,size,&n,NULL)&&n==size&&FlushFileBuffers(h);
     CloseHandle(h);return ok;
 }
+static BOOL create_config_directory(PSID svc, PSID sys, PSID admins,
+                                    const void *policy, DWORD policy_size)
+{
+    DWORD acl_size = sizeof(ACL) +
+        (DWORD)sizeof(ACCESS_ALLOWED_ACE) + GetLengthSid(svc) - sizeof(DWORD) +
+        (DWORD)sizeof(ACCESS_ALLOWED_ACE) + GetLengthSid(sys) - sizeof(DWORD) +
+        (DWORD)sizeof(ACCESS_ALLOWED_ACE) + GetLengthSid(admins) - sizeof(DWORD);
+    PACL acl = (PACL)LocalAlloc(LMEM_FIXED, acl_size);
+    PSECURITY_DESCRIPTOR sd = (PSECURITY_DESCRIPTOR)LocalAlloc(
+        LMEM_FIXED, SECURITY_DESCRIPTOR_MIN_LENGTH);
+    BOOL ok = FALSE;
+    if (!acl || !sd || !InitializeAcl(acl, acl_size, ACL_REVISION))
+        goto done;
+    DWORD inherit = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE;
+    if (!AddAccessAllowedAceEx(acl, ACL_REVISION, inherit, FILE_ALL_ACCESS, svc) ||
+        !AddAccessAllowedAceEx(acl, ACL_REVISION, inherit, FILE_ALL_ACCESS, sys) ||
+        !AddAccessAllowedAceEx(acl, ACL_REVISION, inherit, FILE_ALL_ACCESS, admins) ||
+        !InitializeSecurityDescriptor(sd, SECURITY_DESCRIPTOR_REVISION) ||
+        !SetSecurityDescriptorOwner(sd, svc, FALSE) ||
+        !SetSecurityDescriptorDacl(sd, TRUE, acl, FALSE) ||
+        !SetSecurityDescriptorControl(sd, SE_DACL_PROTECTED, SE_DACL_PROTECTED))
+        goto done;
+    SECURITY_ATTRIBUTES sa = { sizeof(sa), sd, FALSE };
+    if (!CreateDirectoryW(CONFIG_PATH, &sa) ||
+        !write_file_secure(POLICY_PATH, policy, policy_size, &sa))
+        goto done;
+    ok = TRUE;
+done:
+    if (sd) LocalFree(sd);
+    if (acl) LocalFree(acl);
+    return ok;
+}
 static BOOL prepare_fixture(void){
     PSID svc=NULL,user=NULL,sys=NULL,admins=NULL;PACL acl=NULL;PSECURITY_DESCRIPTOR sd=NULL;
     HANDLE tok=NULL;BOOL ok=FALSE;DWORD session=0;LPWSTR sidtext=NULL;DWORD asz;
@@ -189,7 +222,7 @@ static BOOL prepare_fixture(void){
     char policy[256];int pn=_snprintf_s(policy,sizeof(policy),_TRUNCATE,"%ls\n%lu\n",sidtext,(unsigned long)session);
     if(pn<=0)goto done;
     const char payload[]="Raya isolated Broker v2 pinned-root read-only fixture\n";
-    if(!write_file_secure(POLICY_PATH,policy,(DWORD)pn,&sa)||
+    if(!create_config_directory(svc,sys,admins,policy,(DWORD)pn)||
        !write_file_secure(PAYLOAD_PATH,payload,(DWORD)(sizeof(payload)-1),&sa))goto done;
     wprintf(L"FIXTURE_READY session=%lu\n",session);ok=TRUE;
 done:
@@ -406,9 +439,82 @@ done:
     return ok;
 }
 
-static BOOL read_policy_from_root(HANDLE root, PSID *sid, DWORD *session)
+static BOOL open_and_pin_config(PSID service_sid)
 {
-    HANDLE file = open_relative_regular(root, L"client.policy", GENERIC_READ);
+    HANDLE h = CreateFileW(CONFIG_PATH,
+        FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | READ_CONTROL | SYNCHRONIZE,
+        FILE_SHARE_READ, NULL, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+    FILE_ATTRIBUTE_TAG_INFO tag; FILE_STANDARD_INFO standard;
+    PSID owner = NULL; PACL dacl = NULL; PSECURITY_DESCRIPTOR sd = NULL;
+    SECURITY_DESCRIPTOR_CONTROL control = 0; DWORD revision = 0;
+    ACL_SIZE_INFORMATION info; SID_IDENTIFIER_AUTHORITY nt = SECURITY_NT_AUTHORITY;
+    PSID system_sid = NULL, admins_sid = NULL;
+    BOOL seen_svc = FALSE, seen_sys = FALSE, seen_admin = FALSE, ok = FALSE;
+    DWORD e = ERROR_ACCESS_DENIED;
+    if (h == INVALID_HANDLE_VALUE) return FALSE;
+    if (GetFileType(h) != FILE_TYPE_DISK ||
+        !GetFileInformationByHandleEx(h, FileAttributeTagInfo, &tag, sizeof(tag)) ||
+        !GetFileInformationByHandleEx(h, FileStandardInfo, &standard, sizeof(standard)) ||
+        !(tag.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) ||
+        (tag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) ||
+        !standard.Directory || standard.DeletePending) goto done;
+    e = GetSecurityInfo(h, SE_FILE_OBJECT,
+        OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+        &owner, NULL, &dacl, NULL, &sd);
+    if (e != ERROR_SUCCESS || !owner || !EqualSid(owner, service_sid) || !dacl ||
+        !GetSecurityDescriptorControl(sd, &control, &revision) ||
+        !(control & SE_DACL_PROTECTED) ||
+        !GetAclInformation(dacl, &info, sizeof(info), AclSizeInformation) ||
+        info.AceCount != 3) goto done;
+    if (!AllocateAndInitializeSid(&nt, 1, SECURITY_LOCAL_SYSTEM_RID,0,0,0,0,0,0,0,&system_sid) ||
+        !AllocateAndInitializeSid(&nt, 2, SECURITY_BUILTIN_DOMAIN_RID,DOMAIN_ALIAS_RID_ADMINS,0,0,0,0,0,0,&admins_sid)) goto done;
+    for (DWORD i=0; i<info.AceCount; ++i) {
+        ACE_HEADER *header=NULL; ACCESS_ALLOWED_ACE *ace; PSID trustee; BOOL *seen=NULL;
+        if (!GetAce(dacl,i,(LPVOID *)&header) || header->AceType != ACCESS_ALLOWED_ACE_TYPE ||
+            header->AceFlags != (OBJECT_INHERIT_ACE|CONTAINER_INHERIT_ACE)) goto done;
+        ace=(ACCESS_ALLOWED_ACE *)header; trustee=(PSID)&ace->SidStart;
+        if (EqualSid(trustee,service_sid)) seen=&seen_svc;
+        else if (EqualSid(trustee,system_sid)) seen=&seen_sys;
+        else if (EqualSid(trustee,admins_sid)) seen=&seen_admin;
+        else goto done;
+        if (*seen || ace->Mask != FILE_ALL_ACCESS) goto done;
+        *seen=TRUE;
+    }
+    ok=seen_svc&&seen_sys&&seen_admin;
+    if (ok) { g_config_handle=h; h=INVALID_HANDLE_VALUE; }
+done:
+    if(system_sid)FreeSid(system_sid); if(admins_sid)FreeSid(admins_sid);
+    if(sd)LocalFree(sd); if(h!=INVALID_HANDLE_VALUE)CloseHandle(h);
+    if(!ok)SetLastError(e==ERROR_SUCCESS?ERROR_ACCESS_DENIED:e); return ok;
+}
+
+static BOOL validate_policy_file_security(HANDLE file, PSID service_sid)
+{
+    PSID owner=NULL; PACL dacl=NULL; PSECURITY_DESCRIPTOR sd=NULL;
+    SECURITY_DESCRIPTOR_CONTROL control=0; DWORD revision=0; ACL_SIZE_INFORMATION info;
+    SID_IDENTIFIER_AUTHORITY nt=SECURITY_NT_AUTHORITY; PSID system_sid=NULL,admins_sid=NULL;
+    BOOL a=FALSE,b=FALSE,c=FALSE,ok=FALSE;
+    DWORD e=GetSecurityInfo(file,SE_FILE_OBJECT,OWNER_SECURITY_INFORMATION|DACL_SECURITY_INFORMATION,&owner,NULL,&dacl,NULL,&sd);
+    if(e!=ERROR_SUCCESS||!owner||!EqualSid(owner,service_sid)||!dacl||
+       !GetSecurityDescriptorControl(sd,&control,&revision)||!(control&SE_DACL_PROTECTED)||
+       !GetAclInformation(dacl,&info,sizeof(info),AclSizeInformation)||info.AceCount!=3)goto done;
+    if(!AllocateAndInitializeSid(&nt,1,SECURITY_LOCAL_SYSTEM_RID,0,0,0,0,0,0,0,&system_sid)||
+       !AllocateAndInitializeSid(&nt,2,SECURITY_BUILTIN_DOMAIN_RID,DOMAIN_ALIAS_RID_ADMINS,0,0,0,0,0,0,&admins_sid))goto done;
+    for(DWORD i=0;i<info.AceCount;++i){ACE_HEADER *h=NULL;ACCESS_ALLOWED_ACE *ace;PSID trustee;BOOL *seen=NULL;
+       if(!GetAce(dacl,i,(LPVOID *)&h)||h->AceType!=ACCESS_ALLOWED_ACE_TYPE||h->AceFlags!=(OBJECT_INHERIT_ACE|CONTAINER_INHERIT_ACE))goto done;
+       ace=(ACCESS_ALLOWED_ACE *)h;trustee=(PSID)&ace->SidStart;
+       if(EqualSid(trustee,service_sid))seen=&a;else if(EqualSid(trustee,system_sid))seen=&b;else if(EqualSid(trustee,admins_sid))seen=&c;else goto done;
+       if(*seen||ace->Mask!=FILE_ALL_ACCESS)goto done;*seen=TRUE;
+    }
+    ok=a&&b&&c;
+done:
+    if(system_sid)FreeSid(system_sid);if(admins_sid)FreeSid(admins_sid);if(sd)LocalFree(sd);
+    if(!ok)SetLastError(e==ERROR_SUCCESS?ERROR_ACCESS_DENIED:e);return ok;
+}
+static BOOL read_policy_from_config(HANDLE config, PSID service_sid, PSID *sid, DWORD *session)
+{
+    HANDLE file = open_relative_regular(config, L"client.policy", GENERIC_READ);
     FILE_STANDARD_INFO standard;
     char buffer[256] = {0};
     DWORD n = 0;
@@ -417,6 +523,7 @@ static BOOL read_policy_from_root(HANDLE root, PSID *sid, DWORD *session)
     if (file == INVALID_HANDLE_VALUE)
         return FALSE;
     if (!validate_regular_file(file, &standard) ||
+        !validate_policy_file_security(file, service_sid) ||
         standard.EndOfFile.QuadPart >= (LONGLONG)sizeof(buffer) ||
         !ReadFile(file, buffer, (DWORD)standard.EndOfFile.QuadPart, &n, NULL) ||
         n != (DWORD)standard.EndOfFile.QuadPart)
@@ -518,20 +625,18 @@ static BOOL authenticate_client(
     HANDLE impersonated_token = NULL;
     PSID pipe_sid = NULL;
     DWORD pipe_session = 0;
-    DWORD peer_session = 0;
     ULONG peer_pid = 0;
     BOOL impersonating = FALSE;
     BOOL ok = FALSE;
 
-    /* Fail closed if the OS cannot identify the peer process on this pipe. */
+    /* Require an OS-reported local pipe peer PID, but do not open its process
+       or depend on cross-process access to derive the security identity. */
     if (expected == NULL || !IsValidSid(expected) ||
-        get_client_pid == NULL ||
-        !get_client_pid(pipe, &peer_pid) || peer_pid == 0 ||
-        !ProcessIdToSessionId((DWORD)peer_pid, &peer_session))
+        get_client_pid == NULL || !get_client_pid(pipe, &peer_pid) ||
+        peer_pid == 0)
         goto done;
 
-    /* The impersonation token is the authoritative security identity of the
-       named-pipe peer; do not trust any PID/SID/session supplied in a frame. */
+    /* The impersonated pipe token is authoritative for SID and session. */
     if (!ImpersonateNamedPipeClient(pipe))
         goto done;
     impersonating = TRUE;
@@ -541,14 +646,10 @@ static BOOL authenticate_client(
     if (!query_token_identity(impersonated_token, &pipe_sid, &pipe_session))
         goto done;
 
-    ok = EqualSid(pipe_sid, expected) &&
-        pipe_session == expected_session &&
-        peer_session == pipe_session;
-
+    ok = EqualSid(pipe_sid, expected) && pipe_session == expected_session;
 done:
     if (impersonating && !RevertToSelf()) {
-        /* Continuing while still impersonating would violate the service
-           security boundary. Terminate rather than reuse this worker thread. */
+        /* Never reuse a worker thread if impersonation cannot be reverted. */
         TerminateProcess(GetCurrentProcess(), ERROR_CANNOT_IMPERSONATE);
         ExitProcess(ERROR_CANNOT_IMPERSONATE);
     }
@@ -666,8 +767,9 @@ static void WINAPI service_main(DWORD argc,LPWSTR *argv){
     g_status.dwWaitHint=10000;SetServiceStatus(g_status_handle,&g_status);
     PSID expected=NULL,svc=NULL;DWORD session=0;PSECURITY_DESCRIPTOR psd=NULL;HANDLE pipe=INVALID_HANDLE_VALUE;
     if(!lookup_sid(SERVICE_ACCOUNT,&svc)||!verify_service_identity(svc)||
+       !open_and_pin_config(svc)||
+       !read_policy_from_config(g_config_handle,svc,&expected,&session)||
        !open_and_pin_root(svc)||
-       !read_policy_from_root(g_root_handle,&expected,&session)||
        !validate_root_dacl(g_root_handle,svc,expected))goto failed;
     LPWSTR svctext=NULL;LPWSTR usertext=NULL;
     if(!ConvertSidToStringSidW(svc,&svctext))goto failed;
@@ -690,12 +792,12 @@ static void WINAPI service_main(DWORD argc,LPWSTR *argv){
     if(pipe!=INVALID_HANDLE_VALUE)CloseHandle(pipe);pipe=INVALID_HANDLE_VALUE;
     if(g_stop_event)CloseHandle(g_stop_event);g_stop_event=NULL;
     if(g_service_thread)CloseHandle(g_service_thread);g_service_thread=NULL;
-    if(g_root_handle!=INVALID_HANDLE_VALUE)CloseHandle(g_root_handle);g_root_handle=INVALID_HANDLE_VALUE;
+    if(g_root_handle!=INVALID_HANDLE_VALUE)CloseHandle(g_root_handle);g_root_handle=INVALID_HANDLE_VALUE;if(g_config_handle!=INVALID_HANDLE_VALUE)CloseHandle(g_config_handle);g_config_handle=INVALID_HANDLE_VALUE;
     if(psd)LocalFree(psd);if(expected)LocalFree(expected);if(svc)LocalFree(svc);
     g_status.dwCurrentState=SERVICE_STOPPED;SetServiceStatus(g_status_handle,&g_status);return;
 failed:
     if(pipe!=INVALID_HANDLE_VALUE)CloseHandle(pipe);if(psd)LocalFree(psd);if(expected)LocalFree(expected);if(svc)LocalFree(svc);
-    if(g_root_handle!=INVALID_HANDLE_VALUE)CloseHandle(g_root_handle);g_root_handle=INVALID_HANDLE_VALUE;
+    if(g_root_handle!=INVALID_HANDLE_VALUE)CloseHandle(g_root_handle);g_root_handle=INVALID_HANDLE_VALUE;if(g_config_handle!=INVALID_HANDLE_VALUE)CloseHandle(g_config_handle);g_config_handle=INVALID_HANDLE_VALUE;
     if(g_service_thread)CloseHandle(g_service_thread);g_service_thread=NULL;
     g_status.dwWin32ExitCode=GetLastError();g_status.dwCurrentState=SERVICE_STOPPED;SetServiceStatus(g_status_handle,&g_status);
 }
@@ -711,11 +813,11 @@ static BOOL cleanup_one(const wchar_t *path,BOOL dir,PSID user){
 static BOOL cleanup_fixture(void){
     HANDLE t=NULL;PSID user=NULL;DWORD s=0;BOOL ok=FALSE;
     if(!current_user(&user,&s)||!OpenProcessToken(GetCurrentProcess(),TOKEN_ADJUST_PRIVILEGES|TOKEN_QUERY,&t)||!set_privilege(t,SE_RESTORE_NAME))goto done;
-    if(GetFileAttributesW(PAYLOAD_PATH)!=INVALID_FILE_ATTRIBUTES&&!cleanup_one(PAYLOAD_PATH,FALSE,user))goto done;
     if(GetFileAttributesW(POLICY_PATH)!=INVALID_FILE_ATTRIBUTES&&!cleanup_one(POLICY_PATH,FALSE,user))goto done;
+    if(GetFileAttributesW(CONFIG_PATH)!=INVALID_FILE_ATTRIBUTES&&!cleanup_one(CONFIG_PATH,TRUE,user))goto done;
+    if(GetFileAttributesW(PAYLOAD_PATH)!=INVALID_FILE_ATTRIBUTES&&!cleanup_one(PAYLOAD_PATH,FALSE,user))goto done;
     if(GetFileAttributesW(ROOT_PATH)!=INVALID_FILE_ATTRIBUTES&&!cleanup_one(ROOT_PATH,TRUE,user))goto done;
     if(GetFileAttributesW(OLD_PAYLOAD_PATH)!=INVALID_FILE_ATTRIBUTES&&!cleanup_one(OLD_PAYLOAD_PATH,FALSE,user))goto done;
-    if(GetFileAttributesW(OLD_POLICY_PATH)!=INVALID_FILE_ATTRIBUTES&&!cleanup_one(OLD_POLICY_PATH,FALSE,user))goto done;
     if(GetFileAttributesW(ROOT_OLD_PATH)!=INVALID_FILE_ATTRIBUTES&&!cleanup_one(ROOT_OLD_PATH,TRUE,user))goto done;
     if(GetFileAttributesW(BIN_EXE_PATH)!=INVALID_FILE_ATTRIBUTES&&!cleanup_one(BIN_EXE_PATH,FALSE,user))goto done;
     if(GetFileAttributesW(BIN_PATH)!=INVALID_FILE_ATTRIBUTES&&!cleanup_one(BIN_PATH,TRUE,user))goto done;
@@ -725,7 +827,7 @@ done:if(t)CloseHandle(t);if(user)LocalFree(user);return ok;
 
 static BOOL client_case(const char *request,const char *expected_error,BOOL valid_read){
     if(!WaitNamedPipeW(PIPE_NAME,5000)){err(L"WaitNamedPipe",GetLastError());return FALSE;}
-    HANDLE h=CreateFileW(PIPE_NAME,GENERIC_READ|GENERIC_WRITE,0,NULL,OPEN_EXISTING,0,NULL);
+    HANDLE h=CreateFileW(PIPE_NAME,GENERIC_READ|GENERIC_WRITE,0,NULL,OPEN_EXISTING,SECURITY_SQOS_PRESENT|SECURITY_IMPERSONATION,NULL);
     if(h==INVALID_HANDLE_VALUE){err(L"Open named pipe",GetLastError());return FALSE;}
     DWORD mode=PIPE_READMODE_MESSAGE;
     if(!SetNamedPipeHandleState(h,&mode,NULL,NULL)){err(L"Set pipe message mode",GetLastError());CloseHandle(h);return FALSE;}

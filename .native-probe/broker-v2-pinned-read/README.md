@@ -2,68 +2,38 @@
 
 Date: 2026-11-27
 
-Status: elevated single-host runtime acceptance PASSED for this isolated test candidate, including exact root-DACL allowlist enforcement and rejection of an Everyone Modify ACE. This is not Production integration and does not complete Phase 1.
+Status: The revised independent-config layout passed elevated runtime acceptance on 2026-11-27. This is not Production integration and does not complete Phase 1.
 
-## Implemented in this isolated candidate
+## Candidate design
 
-- Disposable service identity/name: `RayaFsBrokerV2Probe20261127` / `NT SERVICE\\RayaFsBrokerV2Probe20261127`.
-- Unique protected fixture and image paths under `C:\\ProgramData\\RayaFsBrokerV2Probe-20261127*` and `C:\\ProgramData\\RayaFsBrokerV2ProbeBin-20261127`.
-- At service startup, query the process token and require the dedicated service SID as TokenUser or an enabled TokenGroups SID. Fail closed if Backup, Restore, Take Ownership, or Debug privileges are enabled.
-- Open and retain the configured root HANDLE; validate directory type/reparse status and service-SID owner.
-- Validate the protected root DACL contents, not just its presence: exactly four inheritable allow ACEs are accepted — service SID, SYSTEM, and Administrators with full control, plus the authorized client SID with read-only directory rights. Unknown trustees, Everyone/Authenticated Users, duplicate ACEs, deny/callback ACEs, and broader client rights are rejected.
-- Read the client policy and payload relative to the pinned root HANDLE using `NtCreateFile` / `OBJECT_ATTRIBUTES.RootDirectory`, `OBJ_DONT_REPARSE`, and `FILE_OPEN_REPARSE_POINT`.
-- Validate the same opened regular-file HANDLE for type, reparse status, deletion state, size cap, and `NumberOfLinks == 1` before reading.
-- Protocol accepts only a fixed root ID (`fixture`); no caller-supplied path is accepted. Unsupported operation and absolute-path request cases are rejected.
-- Test-only setup/cleanup scripts create a uniquely named virtual-account service and protected disposable fixture, attempt root-path replacement while the service is running, and verify cleanup.
-- Restricted-token security-negative harness checks write, WRITE_DAC, WRITE_OWNER, FILE_WRITE_ATTRIBUTES, directory add-file/subdirectory, image modification, and hard-link creation denial.
-- Setup includes a negative test that grants an Everyone Modify ACE to the otherwise protected root and expects the Broker to refuse startup.
+- Disposable service identity: `RayaFsBrokerV2Probe20261127` / `NT SERVICE\RayaFsBrokerV2Probe20261127`.
+- Workspace fixture: `C:\ProgramData\RayaFsBrokerV2Probe-20261127`.
+- Independent service-owned policy directory: `C:\ProgramData\RayaFsBrokerV2ProbeConfig-20261127`.
+- Protected broker image directory: `C:\ProgramData\RayaFsBrokerV2ProbeBin-20261127`.
+- Service startup verifies the dedicated service SID and rejects enabled Backup, Restore, Take Ownership, or Debug privileges.
+- The service opens and pins the config directory before reading `client.policy`. The config directory must be a non-reparse directory owned by the service SID, with a protected DACL containing exactly three full-control allow ACEs: service SID, SYSTEM, and Administrators.
+- `client.policy` is opened relative to the pinned config HANDLE. Its same file HANDLE is checked for regular-file properties, single-link admission, service-SID ownership, and the exact protected three-principal DACL before parsing.
+- The workspace root is opened and pinned separately. Its protected DACL must contain exactly four allow ACEs: service SID, SYSTEM, Administrators (full control), and the authorized client SID (read-only).
+- Payload reads are relative to the pinned workspace HANDLE using `NtCreateFile`, `OBJECT_ATTRIBUTES.RootDirectory`, `OBJ_DONT_REPARSE`, and `FILE_OPEN_REPARSE_POINT`.
+- Protocol accepts only the fixed root ID `fixture`; caller-supplied paths and unsupported operations are rejected.
+- Setup negative tests add an Everyone Modify ACE separately to the config directory and workspace root; both must cause service startup refusal. Restricted-token checks cover file write, WRITE_DAC, WRITE_OWNER, FILE_WRITE_ATTRIBUTES, directory FILE_ADD_FILE, broker-image GENERIC_WRITE, and hard-link creation denial.
 
-## Named-pipe peer identity binding
+## Named-pipe peer identity
 
-The service's request authorization now combines three OS-derived facts:
-- GetNamedPipeClientProcessId supplies the peer PID; ProcessIdToSessionId must
-  resolve that PID successfully.
-- ImpersonateNamedPipeClient + OpenThreadToken obtains the actual security
-  token attached to the named-pipe client, and TokenUser/TokenSessionId are
-  queried from that token.
-- The pipe token SID/session must match the trusted configured SID/session and
-  the session reported for the OS peer PID. No identity field from the request
-  frame is trusted. Missing peer-PID API, invalid expected SID, mismatched SID
-  or mismatched session fails closed.
-- RevertToSelf is mandatory. If it fails, the service process terminates rather
-  than continuing on a worker thread that may still be impersonating the client.
+- `GetNamedPipeClientProcessId` must provide a nonzero OS-reported peer PID. The PID is diagnostic only; the service does not open the client process or rely on cross-process process-query access.
+- `ImpersonateNamedPipeClient` and `OpenThreadToken` obtain the actual pipe-client token. `TokenUser` and `TokenSessionId` from that token must match the configured SID/session.
+- No identity field in the request frame is trusted. `RevertToSelf` is mandatory; if it fails, the service terminates rather than reusing an impersonating worker thread.
+- The local `--peer-auth-test` exercises the same authentication function over a real local named pipe: authorized SID/session accepted, wrong SID and wrong session rejected. Nine checks passed in the last local run.
 
-The non-elevated --peer-auth-test mode exercises the exact authenticate_client
-function used by the service over a real local named pipe. It verifies the OS
-peer PID against the created child process, accepts the expected SID/session,
-rejects a wrong SID, rejects a wrong session, and completes the child handshake.
-Local Windows x64/MSVC result: 9 checks passed. The elevated acceptance runner
-also invokes this test before installing the disposable service.
+## Trust-boundary limitations
 
-This does not open the client process to query its primary token: the service
-uses the OS-authenticated impersonation token as the authoritative client
-identity. The PID/session comparison is an additional OS-derived consistency
-check, not a process-image allowlist. The harness is same-host and same-user
-for this peer-identity test; different-user/session and remote-host cases remain
-separate acceptance work.
-## Elevated validation on 2026-11-27
+- The config directory is currently opened by its fixed absolute path under `C:\ProgramData`. The probe relies on the OS-protected parent directory; it does not yet pin the parent directory and open the config directory relative to that parent HANDLE. This must be addressed or explicitly accepted before Production.
+- `NumberOfLinks == 1` is an admission-time observation. A later hard-link creation may still occur; the current share mode does not prove that future hard links are impossible.
+- Elevated acceptance for the revised independent-config layout passed: peer-auth tests; positive read and invalid-request rejection; over-broad config and root DACL rejection; restricted-token write/ACL/metadata/child-create/image-write/hard-link denials; `BROKER_V2_PINNED_ROOT_ACCEPTANCE_PASS`; service/process/fixture/image/build-output cleanup verified.
+- The real Windows overlapped-I/O cancellation/reaper lifecycle still needs kernel-backed tests; the PR #20 lifecycle model is synthetic.
+- One fixed root and one read-only operation only. Not wired into `server.mjs` or `advanced-tools.mjs`; existing handlers remain unchanged.
+- No second-host, different-user/session, full protocol, Supervisor/Worker lifecycle, crash/restart/tamper recovery, or provider portability acceptance.
 
-- MSVC x64 build passed with `/W4 /WX` for the broker, service-account configurator, and security-negative harness.
-- Disposable Windows service reached Running under the expected virtual service account; process ExitCode was 0.
-- Positive configured-root read passed; unknown root, unsupported operation, and caller-supplied absolute path were rejected.
-- Exact-DACL negative test passed: after an Everyone Modify ACE was added, Broker startup was rejected; after removing it, service startup and read-only requests passed again.
-- Restricted-token checks passed: fixture FILE_WRITE_DATA, WRITE_DAC, WRITE_OWNER, FILE_WRITE_ATTRIBUTES, directory FILE_ADD_FILE, broker image GENERIC_WRITE, and fixture hard-link creation were denied.
-- Adversarial root-path replacement passed in the previous elevated run: while the service retained its root HANDLE, the original root path was renamed and a decoy directory/file was created at the old path; the service continued to return the original fixture content.
-- Runner reported `BROKER_V2_PINNED_ROOT_ACCEPTANCE_PASS` and `BROKER_V2_ACCEPTANCE_TESTS_COMPLETED`.
-- Cleanup verification passed: service absent, broker process count 0, fixture/renamed fixture/image paths absent, and build outputs absent.
-
-## Limits / not yet validated
-
-- One fixed fixture root + one read-only operation only; not the complete 15-operation Phase 1 adapter.
-- This is not wired into `server.mjs` or `advanced-tools.mjs`; existing Production handlers remain unchanged.
-- No second-host remote-client test, different-user/session test, full RY2R protocol, Supervisor/Worker lifecycle integration, crash/restart/tamper recovery, or provider portability proof.
-- No real workspace root/ACL migration and no persistent Production service deployment.
-- The native harness is a research prototype, not an independently security-reviewed Production component.
-- Phase 1 remains IN PROGRESS / NOT ACCEPTED; Production remains NO-GO.
+Phase 1 remains IN PROGRESS / NOT ACCEPTED. Production remains NO-GO.
 
 No runtime package imports this directory.
