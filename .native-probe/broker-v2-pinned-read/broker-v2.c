@@ -332,6 +332,80 @@ static BOOL open_and_pin_root(PSID service_sid)
     return TRUE;
 }
 
+/*
+ * A protected-DACL bit is not itself a security policy. Require exactly the
+ * four ACEs provisioned by the fixture: service/SYSTEM/Administrators full
+ * control and the authorized client read-only. Reject broad or unknown ACEs.
+ */
+static BOOL validate_root_dacl(HANDLE root, PSID service_sid, PSID client_sid)
+{
+    PSID owner = NULL;
+    PACL dacl = NULL;
+    PSECURITY_DESCRIPTOR sd = NULL;
+    SECURITY_DESCRIPTOR_CONTROL control = 0;
+    DWORD revision = 0;
+    ACL_SIZE_INFORMATION info;
+    SID_IDENTIFIER_AUTHORITY nt = SECURITY_NT_AUTHORITY;
+    PSID system_sid = NULL;
+    PSID admins_sid = NULL;
+    BOOL seen_service = FALSE, seen_system = FALSE;
+    BOOL seen_admins = FALSE, seen_client = FALSE;
+    BOOL ok = FALSE;
+    DWORD e = GetSecurityInfo(root, SE_FILE_OBJECT,
+        OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+        &owner, NULL, &dacl, NULL, &sd);
+    if (e != ERROR_SUCCESS || owner == NULL || !EqualSid(owner, service_sid) ||
+        dacl == NULL || !GetSecurityDescriptorControl(sd, &control, &revision) ||
+        !(control & SE_DACL_PROTECTED) ||
+        !GetAclInformation(dacl, &info, sizeof(info), AclSizeInformation) ||
+        info.AceCount != 4)
+        goto done;
+    if (!AllocateAndInitializeSid(&nt, 1, SECURITY_LOCAL_SYSTEM_RID,
+            0, 0, 0, 0, 0, 0, 0, &system_sid) ||
+        !AllocateAndInitializeSid(&nt, 2, SECURITY_BUILTIN_DOMAIN_RID,
+            DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0, 0, 0, 0, &admins_sid))
+        goto done;
+    for (DWORD i = 0; i < info.AceCount; ++i) {
+        ACE_HEADER *header = NULL;
+        ACCESS_ALLOWED_ACE *ace;
+        PSID trustee;
+        BOOL *seen = NULL;
+        ACCESS_MASK expected_mask = 0;
+        if (!GetAce(dacl, i, (LPVOID *)&header) ||
+            header->AceType != ACCESS_ALLOWED_ACE_TYPE ||
+            header->AceFlags != (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE))
+            goto done;
+        ace = (ACCESS_ALLOWED_ACE *)header;
+        trustee = (PSID)&ace->SidStart;
+        if (EqualSid(trustee, service_sid)) {
+            seen = &seen_service;
+            expected_mask = FILE_ALL_ACCESS;
+        } else if (EqualSid(trustee, system_sid)) {
+            seen = &seen_system;
+            expected_mask = FILE_ALL_ACCESS;
+        } else if (EqualSid(trustee, admins_sid)) {
+            seen = &seen_admins;
+            expected_mask = FILE_ALL_ACCESS;
+        } else if (EqualSid(trustee, client_sid)) {
+            seen = &seen_client;
+            expected_mask = FILE_READ_DATA | FILE_READ_ATTRIBUTES |
+                READ_CONTROL | SYNCHRONIZE | FILE_LIST_DIRECTORY | FILE_TRAVERSE;
+        } else {
+            goto done;
+        }
+        if (*seen || ace->Mask != expected_mask)
+            goto done;
+        *seen = TRUE;
+    }
+    ok = seen_service && seen_system && seen_admins && seen_client;
+done:
+    if (system_sid) FreeSid(system_sid);
+    if (admins_sid) FreeSid(admins_sid);
+    if (sd) LocalFree(sd);
+    if (!ok) SetLastError(e == ERROR_SUCCESS ? ERROR_ACCESS_DENIED : e);
+    return ok;
+}
+
 static BOOL read_policy_from_root(HANDLE root, PSID *sid, DWORD *session)
 {
     HANDLE file = open_relative_regular(root, L"client.policy", GENERIC_READ);
@@ -510,7 +584,10 @@ static void WINAPI service_main(DWORD argc,LPWSTR *argv){
     g_status.dwControlsAccepted=SERVICE_ACCEPT_STOP|SERVICE_ACCEPT_SHUTDOWN;g_status.dwCurrentState=SERVICE_START_PENDING;
     g_status.dwWaitHint=10000;SetServiceStatus(g_status_handle,&g_status);
     PSID expected=NULL,svc=NULL;DWORD session=0;PSECURITY_DESCRIPTOR psd=NULL;HANDLE pipe=INVALID_HANDLE_VALUE;
-    if(!lookup_sid(SERVICE_ACCOUNT,&svc)||!verify_service_identity(svc)||!open_and_pin_root(svc)||!read_policy_from_root(g_root_handle,&expected,&session))goto failed;
+    if(!lookup_sid(SERVICE_ACCOUNT,&svc)||!verify_service_identity(svc)||
+       !open_and_pin_root(svc)||
+       !read_policy_from_root(g_root_handle,&expected,&session)||
+       !validate_root_dacl(g_root_handle,svc,expected))goto failed;
     LPWSTR svctext=NULL;LPWSTR usertext=NULL;
     if(!ConvertSidToStringSidW(svc,&svctext))goto failed;
     if(!ConvertSidToStringSidW(expected,&usertext)){LocalFree(svctext);goto failed;}

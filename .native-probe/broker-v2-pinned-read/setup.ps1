@@ -46,6 +46,25 @@ try {
   & $exe --client-test
   if ($LASTEXITCODE -ne 0) { throw "initial Broker v2 protocol suite failed: $LASTEXITCODE" }
 
+  # The broker must reject a protected but over-broad DACL, not merely check
+  # that the DACL is present and marked protected.
+  Stop-Service -Name $svc
+  (Get-Service -Name $svc).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(20))
+  & icacls.exe $root /grant '*S-1-1-0:(OI)(CI)(M)'
+  if ($LASTEXITCODE -ne 0) { throw "could not install deliberately broad test ACE: $LASTEXITCODE" }
+  & sc.exe start $svc | Out-Null
+  Start-Sleep -Seconds 2
+  if ((Get-Service -Name $svc).Status -ne 'Stopped') {
+    throw 'Broker accepted a protected root DACL containing an Everyone Modify ACE.'
+  }
+  Write-Output 'PASS over-broad protected root DACL rejected'
+  & icacls.exe $root /remove:g '*S-1-1-0'
+  if ($LASTEXITCODE -ne 0) { throw "could not remove deliberately broad test ACE: $LASTEXITCODE" }
+  Start-Service -Name $svc
+  (Get-Service -Name $svc).WaitForStatus('Running', [TimeSpan]::FromSeconds(20))
+  & $exe --client-test
+  if ($LASTEXITCODE -ne 0) { throw "Broker v2 protocol suite failed after restoring exact root DACL: $LASTEXITCODE" }
+
   & $security
   if ($LASTEXITCODE -ne 0) { throw "restricted-token ACL/hard-link denial suite failed: $LASTEXITCODE" }
 
