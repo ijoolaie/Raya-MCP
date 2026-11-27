@@ -4,7 +4,6 @@
 #include <wchar.h>
 #include <stdlib.h>
 #include <limits.h>
-#include <string.h>
 
 #ifndef OBJ_DONT_REPARSE
 #define OBJ_DONT_REPARSE 0x00001000L
@@ -13,6 +12,12 @@
 typedef NTSTATUS (NTAPI *RayaNtCreateFileFn)(
     PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, PIO_STATUS_BLOCK,
     PLARGE_INTEGER, ULONG, ULONG, ULONG, ULONG, PVOID, ULONG);
+
+static RayaNtCreateFileFn get_nt_create_file(void)
+{
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    return ntdll ? (RayaNtCreateFileFn)GetProcAddress(ntdll, "NtCreateFile") : NULL;
+}
 
 static BOOL validate_directory_handle(HANDLE handle)
 {
@@ -24,6 +29,15 @@ static BOOL validate_directory_handle(HANDLE handle)
         (tag.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 &&
         (tag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0 &&
         standard.Directory && !standard.DeletePending;
+}
+
+static BOOL valid_single_component(const wchar_t *name, size_t *chars)
+{
+    size_t count = 0;
+    if (name == NULL || !raya_validate_relative_path(name, &count) || count != 1)
+        return FALSE;
+    *chars = wcslen(name);
+    return *chars <= 255;
 }
 
 static HANDLE open_child_directory(RayaNtCreateFileFn nt, HANDLE parent,
@@ -39,7 +53,6 @@ static HANDLE open_child_directory(RayaNtCreateFileFn nt, HANDLE parent,
         SetLastError(ERROR_INVALID_NAME);
         return INVALID_HANDLE_VALUE;
     }
-
     name.Buffer = (PWSTR)component;
     name.Length = (USHORT)(chars * sizeof(wchar_t));
     name.MaximumLength = name.Length;
@@ -83,31 +96,25 @@ void raya_close_handle_chain(RAYA_HANDLE_CHAIN *chain)
 BOOL raya_open_directory_chain(HANDLE root, const wchar_t *relative_path,
                                RAYA_HANDLE_CHAIN *chain)
 {
-    HMODULE ntdll;
     RayaNtCreateFileFn nt;
     size_t component_count = 0, length, start, index = 0;
     HANDLE parent = root;
 
-    if (chain == NULL) {
+    if (chain == NULL || chain->handles != NULL || chain->count != 0) {
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    chain->handles = NULL;
-    chain->count = 0;
     if (root == NULL || root == INVALID_HANDLE_VALUE ||
         !validate_directory_handle(root) ||
         !raya_validate_relative_path(relative_path, &component_count)) {
         SetLastError(ERROR_INVALID_NAME);
         return FALSE;
     }
-
-    ntdll = GetModuleHandleW(L"ntdll.dll");
-    nt = ntdll ? (RayaNtCreateFileFn)GetProcAddress(ntdll, "NtCreateFile") : NULL;
+    nt = get_nt_create_file();
     if (nt == NULL) {
         SetLastError(ERROR_PROC_NOT_FOUND);
         return FALSE;
     }
-
     chain->handles = (HANDLE *)calloc(component_count, sizeof(HANDLE));
     if (chain->handles == NULL) {
         SetLastError(ERROR_OUTOFMEMORY);
@@ -132,5 +139,72 @@ BOOL raya_open_directory_chain(HANDLE root, const wchar_t *relative_path,
             start = pos + 1;
         }
     }
+    return TRUE;
+}
+
+BOOL raya_open_single_link_regular_file(HANDLE parent, const wchar_t *name,
+                                        ULONGLONG maximum_size,
+                                        HANDLE *file_handle, ULONGLONG *file_size)
+{
+    RayaNtCreateFileFn nt;
+    UNICODE_STRING object_name;
+    OBJECT_ATTRIBUTES attributes;
+    IO_STATUS_BLOCK io;
+    FILE_ATTRIBUTE_TAG_INFO tag;
+    FILE_STANDARD_INFO standard;
+    HANDLE file = INVALID_HANDLE_VALUE;
+    size_t chars = 0;
+    NTSTATUS status;
+
+    if (file_handle == NULL || file_size == NULL ||
+        *file_handle != NULL) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    *file_size = 0;
+    if (parent == NULL || parent == INVALID_HANDLE_VALUE ||
+        !validate_directory_handle(parent) ||
+        !valid_single_component(name, &chars)) {
+        SetLastError(ERROR_INVALID_NAME);
+        return FALSE;
+    }
+    nt = get_nt_create_file();
+    if (nt == NULL) {
+        SetLastError(ERROR_PROC_NOT_FOUND);
+        return FALSE;
+    }
+
+    object_name.Buffer = (PWSTR)name;
+    object_name.Length = (USHORT)(chars * sizeof(wchar_t));
+    object_name.MaximumLength = object_name.Length;
+    InitializeObjectAttributes(&attributes, &object_name,
+        OBJ_CASE_INSENSITIVE | OBJ_DONT_REPARSE, parent, NULL);
+
+    status = nt(&file,
+        FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+        &attributes, &io, NULL, FILE_ATTRIBUTE_NORMAL,
+        FILE_SHARE_READ, FILE_OPEN,
+        FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT |
+            FILE_NON_DIRECTORY_FILE,
+        NULL, 0);
+    if (status < 0) {
+        SetLastError(ERROR_ACCESS_DENIED);
+        return FALSE;
+    }
+
+    if (GetFileType(file) != FILE_TYPE_DISK ||
+        !GetFileInformationByHandleEx(file, FileAttributeTagInfo, &tag, sizeof(tag)) ||
+        !GetFileInformationByHandleEx(file, FileStandardInfo, &standard, sizeof(standard)) ||
+        (tag.FileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0 ||
+        standard.Directory || standard.DeletePending || standard.NumberOfLinks != 1 ||
+        standard.EndOfFile.QuadPart < 0 ||
+        (ULONGLONG)standard.EndOfFile.QuadPart > maximum_size) {
+        CloseHandle(file);
+        SetLastError(ERROR_ACCESS_DENIED);
+        return FALSE;
+    }
+
+    *file_size = (ULONGLONG)standard.EndOfFile.QuadPart;
+    *file_handle = file;
     return TRUE;
 }
