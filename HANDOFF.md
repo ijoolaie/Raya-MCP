@@ -1,4 +1,4 @@
-# Raya Local MCP Bridge â€” Handoff
+﻿# Raya Local MCP Bridge â€” Handoff
 Updated: 2026-11-01
 
 ## Goal
@@ -1154,46 +1154,45 @@ All 15 registered production filesystem operations/modes remain unaccepted again
 - Phase 1 remains IN PROGRESS / NOT ACCEPTED; all 15 registered production filesystem operations/modes remain unaccepted. PR #19 and #20 remain Draft; do not merge or connect to Production before the full acceptance gate passes.
 - Worktree: C:\Users\Ali\Raya-Local-MCP-staging-20261126\broker-v2-read-ops-research-20261127. Original dirty checkout C:\Users\Ali\local-mcp-bridge remains untouched.
 
-\n## 2026-11-27 latest handoff — read-only operation extension\n\n- PR #20 remains Draft, not merged. Branch: research/broker-v2-read-ops-foundation-20261127. Current remote head before this increment: 0d6125885286a6c9f8310c530752132cb66c94b1.\n- Added a 20-byte REQUEST fixed header with operation, rootId/path lengths, reserved-zero field, 64-bit offset and 32-bit length.\n- Test-only file operation support now includes READ_FILE, GET_FILE_INFO, READ_FILE_CHUNK and READ_FILE_TAIL; LIST_DIRECTORY continues to pin root/nested directory HANDLEs.\n- Same validated final-file HANDLE is used for reads and metadata. READ_FILE_CHUNK requires exact in-file range; READ_FILE_TAIL returns up to requested tail bytes. Caller must quiesce/join context users before close; per-context SRWLOCK serializes read/metadata calls only.\n- Local validation: all eleven native commands passed. Key counts: root registry/request contexts 65, REQUEST/ERROR 62, message-mode transport 109, deadline arithmetic 20, overlapped cancellation 23, reaper 42. Local symbolic-link creation unavailable in some fixtures (1314), explicitly SKIP.\n- GitHub Actions run #62 (45972087376) green for preceding head 0d61258. New code/docs commit must trigger and pass its own CI.\n- Outstanding: asynchronous framed message/ACK transport with deadlines wired to reaper; more disconnect/cancel race coverage; root owner/DACL and authenticated client binding; production ROOTS integration; write/edit/move/rename/delete operations; directory snapshot semantics; hard-link mutation decision.\n- Phase 1 remains IN PROGRESS / NOT ACCEPTED; all 15 production filesystem operations/modes remain unaccepted. Production confinement remains NO-GO.\n- Original dirty checkout C:\\Users\\Ali\\local-mcp-bridge remains untouched. No Production service, ACL migration or real workspace deployment.\n
-## 2026-11-27 latest handoff — read-only operation expansion
+\n\n## 2026-11-27 current handoff — Phase 1 / PR #19 and #20\n\n### PR and worktrees\n- PR #19: Draft, separate test-only pinned-root Broker v2 slice; not merged.\n- PR #20: Draft, not merged; branch research/broker-v2-read-ops-foundation-20261127.\n- Current pushed PR #20 head before this increment: d74c23c4213c518db768a84771a1d48f290c74da.\n- Current worktree: C:\\Users\\Ali\\Raya-Local-MCP-staging-20261126\\broker-v2-read-ops-research-20261127.\n- Original dirty checkout C:\\Users\\Ali\\local-mcp-bridge remains untouched.\n\n### Test-only native work\n- UTF-16 relative-path lexical gate; HANDLE-relative directory chain and final-file open; bounded directory enumeration.\n- Configured root registry and request-scoped HANDLE context.\n- Five read-only operation contracts: READ_FILE, LIST_DIRECTORY, GET_FILE_INFO, READ_FILE_CHUNK, READ_FILE_TAIL. REQUEST fixed header is 20 bytes with 64-bit offset and 32-bit length. Reads and metadata use the same validated final-file HANDLE.\n- RYA2 frame codec, REQUEST/ERROR payload validation, bounded response TX/RX state machine, message-mode transport and end-to-end READ_FILE slice.\n- Synthetic I/O lifecycle, monotonic deadline arithmetic, actual overlapped pipe cancellation, heap-owned reaper experiment.\n- New uncommitted increment adds overlapped message-mode ACK-read deadline/cancellation experiment and its CI step. It applies one request deadline plus per-frame cap; after timeout it cancels and drains terminal completion before releasing stack OVERLAPPED/event/buffer. This is memory-safe but the caller remains blocked until completion; it is not a persistent reaper or complete async frame transport.\n\n### Local validation\n- Twelve native build/test commands pass locally on Windows x64/MSVC.\n- Counts: lexical path 25; directory enumeration 30; root registry/request contexts 63; I/O lifecycle 34; deadline arithmetic 20; overlapped cancellation 23; heap reaper 42; frame codec 57; REQUEST/ERROR 62; message-mode transport 109; overlapped message-mode ACK read 27. HANDLE-chain suite passed.\n- The new overlapped message-mode test passed four consecutive runs.\n- Some symbolic-link fixtures are explicitly SKIP locally because Windows returned ERROR_PRIVILEGE_NOT_HELD (1314); these are not counted as passes.\n- GitHub Actions run #63 (45973916065) is fully green for d74c23c, including all native steps, npm audit, syntax, modular verification and MCP tests. The current uncommitted increment must be committed/pushed and its own CI observed.\n\n### Unresolved Phase 1 gates\n- Hard-link count is an admission-time observation; Windows allows a new link after the check while the same HANDLE remains open. Security policy decision remains open.\n- Directory enumeration is not snapshot-consistent under concurrent child mutation.\n- Test root registry does not validate owner/DACL, authenticate callers or load production ROOTS.\n- Full framed transport remains synchronous. The overlapped message-mode helper is not integrated into all TX/RX/ACK paths and does not use a persistent reaper.\n- workspace_roots/workspace_list, read_multiple_files, filename/content search, write/edit/create/move/rename/delete operations remain unimplemented or unaccepted in this native slice.\n- All 15 production filesystem operations/modes remain unaccepted. Phase 1 is IN PROGRESS / NOT ACCEPTED; Production confinement is NO-GO.\n\n### Next actions\n1. Commit/push the overlapped message-mode experiment and observe its complete CI run.\n2. Move pending OVERLAPPED operations to heap-owned persistent reaper ownership so timed-out requests can return without freeing in-flight resources.\n3. Wire deadlines/cancellation/reaper into every framed REQUEST/RESPONSE/ACK/ERROR operation and add async disconnect/race tests.\n4. Design and test remaining read/list/search operation families, then write/edit/create/move/rename/delete with transaction/race/failure matrices.\n5. Resolve hard-link policy and production root owner/DACL/client identity before any Production integration.\n\nNo Production service installation, production ACL migration, real workspace deployment or Node handler integration was performed.\n
 
-### Current isolated work
-- PR #20 latest pushed head: 0d6125885286a6c9f8310c530752132cb66c94b1; Draft, not merged.
+## 2026-11-27 current handoff — Phase 1 / PR #19 and #20
+
+### PR and worktrees
+- PR #19: Draft, separate test-only pinned-root Broker v2 slice; not merged.
+- PR #20: Draft, not merged; branch research/broker-v2-read-ops-foundation-20261127.
+- Current pushed PR #20 head before this increment: d74c23c4213c518db768a84771a1d48f290c74da.
 - Current worktree: C:\Users\Ali\Raya-Local-MCP-staging-20261126\broker-v2-read-ops-research-20261127.
 - Original dirty checkout C:\Users\Ali\local-mcp-bridge remains untouched.
-- New read-operation/schema changes are currently uncommitted in the isolated worktree.
 
-### New test-only read-only contract
-- REQUEST fixed header is now 20 bytes: operation, rootId length, UTF-16 path length, reserved, 64-bit offset, 32-bit requested length.
-- Operation codes: READ_FILE=1, LIST_DIRECTORY=2, GET_FILE_INFO=3, READ_FILE_CHUNK=4, READ_FILE_TAIL=5.
-- READ_FILE reads the whole file up to 256 KiB; GET_FILE_INFO returns same-HANDLE metadata; READ_FILE_CHUNK requires a nonzero bounded length and in-file offset range; READ_FILE_TAIL returns up to the requested final bytes; LIST_DIRECTORY pins the configured root or nested directory.
-- File content uses NtReadFile with an explicit byte offset on the same validated file HANDLE. A per-context SRW lock serializes reads, metadata queries, and close.
-- The test-only root registry still does not validate root owner/DACL, authenticate the client, load production ROOTS, or integrate with Node handlers.
+### Test-only native work
+- UTF-16 relative-path lexical gate; HANDLE-relative directory chain and final-file open; bounded directory enumeration.
+- Configured root registry and request-scoped HANDLE context.
+- Five read-only operation contracts: READ_FILE, LIST_DIRECTORY, GET_FILE_INFO, READ_FILE_CHUNK, READ_FILE_TAIL. REQUEST fixed header is 20 bytes with 64-bit offset and 32-bit length. Reads and metadata use the same validated final-file HANDLE.
+- RYA2 frame codec, REQUEST/ERROR payload validation, bounded response TX/RX state machine, message-mode transport and end-to-end READ_FILE slice.
+- Synthetic I/O lifecycle, monotonic deadline arithmetic, actual overlapped pipe cancellation, heap-owned reaper experiment.
+- New uncommitted increment adds overlapped message-mode ACK-read deadline/cancellation experiment and its CI step. It applies one request deadline plus per-frame cap; after timeout it cancels and drains terminal completion before releasing stack OVERLAPPED/event/buffer. This is memory-safe but the caller remains blocked until completion; it is not a persistent reaper or complete async frame transport.
 
-### Latest local validation
-- REQUEST/ERROR payload tests: 62 passed.
-- Configured root/request context tests: 63 passed.
-- Message-mode transport/E2E/disconnect tests: 109 passed.
-- All eleven native test commands passed locally on Windows x64/MSVC.
-- File/directory/configured-root symbolic-link creation remains skipped locally when Windows returns ERROR_PRIVILEGE_NOT_HELD (1314); CI must cover these cases.
+### Local validation
+- Twelve native build/test commands pass locally on Windows x64/MSVC.
+- Counts: lexical path 25; directory enumeration 30; root registry/request contexts 63; I/O lifecycle 34; deadline arithmetic 20; overlapped cancellation 23; heap reaper 42; frame codec 57; REQUEST/ERROR 62; message-mode transport 109; overlapped message-mode ACK read 27. HANDLE-chain suite passed.
+- The new overlapped message-mode test passed four consecutive runs.
+- Some symbolic-link fixtures are explicitly SKIP locally because Windows returned ERROR_PRIVILEGE_NOT_HELD (1314); these are not counted as passes.
+- GitHub Actions run #63 (45973916065) is fully green for d74c23c, including all native steps, npm audit, syntax, modular verification and MCP tests. The current uncommitted increment must be committed/pushed and its own CI observed.
+
+### Unresolved Phase 1 gates
+- Hard-link count is an admission-time observation; Windows allows a new link after the check while the same HANDLE remains open. Security policy decision remains open.
+- Directory enumeration is not snapshot-consistent under concurrent child mutation.
+- Test root registry does not validate owner/DACL, authenticate callers or load production ROOTS.
+- Full framed transport remains synchronous. The overlapped message-mode helper is not integrated into all TX/RX/ACK paths and does not use a persistent reaper.
+- workspace_roots/workspace_list, read_multiple_files, filename/content search, write/edit/create/move/rename/delete operations remain unimplemented or unaccepted in this native slice.
+- All 15 production filesystem operations/modes remain unaccepted. Phase 1 is IN PROGRESS / NOT ACCEPTED; Production confinement is NO-GO.
 
 ### Next actions
-1. Review and commit the current schema/context changes, then push PR #20.
-2. Poll the latest CI run through full completion; previous code commit d6a8966 has all native steps green, with modular verification still being monitored.
-3. Extend read-only coverage to workspace_roots/workspace_list, read_multiple_files and filename/content search with bounded traversal and per-file same-HANDLE validation.
-4. Then design and test write/edit/create/move operations separately with atomicity, identity, hard-link and race requirements.
-5. Resolve the hard-link mutation policy and production root owner/DACL/client identity requirements before integration.
-6. Keep PR #19 and #20 Draft. Phase 1 remains IN PROGRESS / NOT ACCEPTED; all 15 production filesystem operations/modes remain unaccepted.
+1. Commit/push the overlapped message-mode experiment and observe its complete CI run.
+2. Move pending OVERLAPPED operations to heap-owned persistent reaper ownership so timed-out requests can return without freeing in-flight resources.
+3. Wire deadlines/cancellation/reaper into every framed REQUEST/RESPONSE/ACK/ERROR operation and add async disconnect/race tests.
+4. Design and test remaining read/list/search operation families, then write/edit/create/move/rename/delete with transaction/race/failure matrices.
+5. Resolve hard-link policy and production root owner/DACL/client identity before any Production integration.
 
-## 2026-11-27 follow-up — overlapped message-mode read deadlines\n\n- Added overlapped-message-frame-tests.c and build-overlapped-message-frame-tests.cmd, now wired into Windows CI.\n- Real message-mode pipe tests use FILE_FLAG_OVERLAPPED and a shared monotonic request deadline/per-frame cap for ACK reads.\n- A timed-out read requests CancelIoEx and retains the stack OVERLAPPED/event/buffer until terminal completion is observed. This is memory-safe but the caller waits for completion; it is not a persistent heap-owned reaper.\n- 27 assertions pass locally, including delayed ACK, shared deadline reduction, cancellation, ERROR_MORE_DATA and peer disconnect. Repeated the executable three times with all tests passing.\n- Full message-mode frame TX/RX remains synchronous. Next step is move operation records to a heap-owned persistent reaper, then wire deadline/cancellation to every framed ACK wait.\n- Phase 1 remains IN PROGRESS / NOT ACCEPTED. No production integration.
-## 2026-11-27 latest handoff — overlapped message-mode ACK test
-
-- Latest pushed PR #20 head before this increment: d74c23c4213c518db768a84771a1d48f290c74da; Draft, not merged.
-- CI run #63 (45973916065) is fully green end-to-end for d74c23c.
-- Current uncommitted addition: overlapped-message-frame-tests.c plus build-overlapped-message-frame-tests.cmd and the CI workflow step. It has 27 local assertions and uses an actual FILE_FLAG_OVERLAPPED message-mode named pipe.
-- The new test verifies framed ACK receipt before deadline, cancellation and terminal drain after timeout, remaining request-wide budget on a subsequent read, ERROR_MORE_DATA and disconnect. It retains stack resources until completion, so the post-cancel drain is intentionally unbounded.
-- The full message-mode response TX/RX transport remains synchronous; the overlapped helper is not yet wired into the complete response state machine or persistent heap-owned reaper.
-- All twelve native test commands passed locally on Windows x64/MSVC.
-- Root registry/read contexts now test READ_FILE, LIST_DIRECTORY, GET_FILE_INFO, READ_FILE_CHUNK and READ_FILE_TAIL. REQUEST schema is 20 bytes with checked offset/length. Other operations (workspace roots/list, multiple files, search and mutations) remain unaccepted.
-- Hard-link mutation remains an explicit unresolved policy issue. Root owner/DACL and authenticated client identity are not implemented. Directory enumeration is not snapshot-consistent.
-- Keep PR #19 and #20 Draft. Phase 1 remains IN PROGRESS / NOT ACCEPTED; all 15 production filesystem operations/modes remain unaccepted. Original dirty checkout C:\Users\Ali\local-mcp-bridge remains untouched.
+No Production service installation, production ACL migration, real workspace deployment or Node handler integration was performed.
