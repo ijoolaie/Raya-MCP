@@ -54,6 +54,10 @@ It is not yet integrated into Broker v2 or any application handler.
   otherwise the test reports an explicit skip. Directory junction creation is
   independently tested.
 
+## Next protocol work
+
+`read-protocol-design.md` records a proposed bounded multi-frame read protocol and the separate unresolved overlapped-I/O cancellation lifetime model. It is a design note only; neither is implemented or integrated.
+
 ## Not yet established
 
 This is not production acceptance. Additional work is required for directory
