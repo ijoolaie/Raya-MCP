@@ -10,17 +10,17 @@ Extend the existing private `ijoolaie/Raya-MCP` repository. Do not create a seco
 
 Keep Raya MCP as the local capability/control plane. Add a separately permissioned agent layer that plans tasks and calls narrowly scoped MCP tools. The model is replaceable: OpenAI can be the high-capability reasoning provider, while an optional local model can handle eligible low-risk tasks. The software can be free to run locally, but OpenAI API inference is usage-billed; a ChatGPT subscription does not include API credits.
 
-## Verified baseline (2026-11-02)
+## Verified baseline (reconciled 2026-11-27)
 
 - Private GitHub repository: `ijoolaie/Raya-MCP`, default branch `main`.
 - Local Windows checkout: `C:\Users\Ali\local-mcp-bridge`.
-- MCP catalog exposed by the connected local integration: 45 tools.
+- The modular Local MCP acceptance check on 2026-11-27 completed MCP initialize and `tools/list` successfully and returned 47 tools. This is an isolated local acceptance result, not a claim that every tool has independent security acceptance.
 - Implemented tool families include workspace/file operations, bounded process sessions, search, configuration/diagnostics, HTTPS text retrieval, and PDF/DOCX/XLSX adapters.
 - The local test run passed: 42 core checks, 34 format/config checks, HTTP unauthenticated/authenticated initialization checks (401/200), and 36 URL-security checks. These are suite counts, not proof that every tool has exhaustive acceptance coverage.
 - The local checkout has uncommitted changes on `security/hardlink-alias-policy-probe`. Preserve them; do not reset, stash, overwrite, or mix them into this feature branch.
 - Phase 1 filesystem confinement is explicitly **IN PROGRESS / NOT ACCEPTED**. The isolated native prototypes are test-only and are not approved for production integration. Path-based production handlers still have unresolved race/TOCTOU risk.
 - PowerShell execution is disabled by default. When enabled it runs with the Windows account's privileges and is not a sandbox.
-- Existing dependency remediation work is on `security/minimatch-remediation` and must remain independent until its PR is reviewed, merged, and the default-branch alert is rechecked.
+- Dependency remediation is now present on `main` after PR #8; the Windows CI dependency-audit step passed. Dependabot alert #1 still requires a direct GitHub Security status check before it can be declared closed.
 
 ## Target architecture
 
@@ -112,7 +112,7 @@ Treat page text, files, emails, and tool output as untrusted data, not as instru
 
 1. Preserve the current dirty local checkout and its native/security experiments.
 2. Review the existing handoff and phase-1 acceptance evidence; do not advance production filesystem code while Phase 1 is not accepted.
-3. Complete the independent dependency-remediation PR review.
+3. Confirm GitHub Security alert #1 and document the default-branch dependency graph.
 4. Prepare a clean implementation worktree from the chosen reviewed base before code changes.
 5. Start Phase 2 only after the Phase 1 gate is accepted; until then, architecture/design and isolated tests only.
 
