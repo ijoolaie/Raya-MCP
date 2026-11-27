@@ -140,8 +140,9 @@ static BOOL finish_connect(HANDLE pipe, OVERLAPPED *ov, HANDLE event_handle,
         return TRUE;
     wait_result = WaitForSingleObject(event_handle, 5000);
     if (wait_result != WAIT_OBJECT_0) {
-        CancelIoEx(pipe, ov);
-        (void)WaitForSingleObject(event_handle, 5000);
+        DWORD ignored = 0;
+        (void)CancelIoEx(pipe, ov);
+        (void)GetOverlappedResult(pipe, ov, &ignored, TRUE);
         return FALSE;
     }
     return GetOverlappedResult(pipe, ov, &transferred, FALSE);
@@ -153,8 +154,9 @@ static void cancel_connect(HANDLE pipe, OVERLAPPED *ov, HANDLE event_handle,
     if (event_handle == NULL)
         return;
     if (!completed) {
-        CancelIoEx(pipe, ov);
-        (void)WaitForSingleObject(event_handle, 5000);
+        DWORD ignored = 0;
+        (void)CancelIoEx(pipe, ov);
+        (void)GetOverlappedResult(pipe, ov, &ignored, TRUE);
     }
     CloseHandle(event_handle);
 }
