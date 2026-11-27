@@ -898,16 +898,25 @@ static BOOL validate_enumerated_regular_file(HANDLE directory, const WCHAR *leaf
 }
 
 static napi_value read_child_from_parent(napi_env env, napi_callback_info info) {
-  size_t argc = 3;
-  napi_value argv[3], result, value, contentValue;
+  size_t argc = 4;
+  napi_value argv[4], result, value, contentValue;
+  napi_value testAfterSingleLinkCheck = NULL;
   char *name8 = NULL;
   wchar_t *nameWide = NULL;
   HANDLE child = INVALID_HANDLE_VALUE;
   char error[160];
   uint32_t maxReadBytes = 0;
-  if (napi_get_cb_info(env, info, &argc, argv, NULL, NULL) != napi_ok || argc != 3) {
-    napi_throw_type_error(env, NULL, "readChildFromParent(parent, childName, maxReadBytes) requires three arguments");
+  if (napi_get_cb_info(env, info, &argc, argv, NULL, NULL) != napi_ok || argc < 3 || argc > 4) {
+    napi_throw_type_error(env, NULL, "readChildFromParent(parent, childName, maxReadBytes[, testAfterSingleLinkCheck]) requires three or four arguments");
     return NULL;
+  }
+  if (argc == 4) {
+    napi_valuetype callbackType;
+    if (napi_typeof(env, argv[3], &callbackType) != napi_ok || callbackType != napi_function) {
+      napi_throw_type_error(env, NULL, "testAfterSingleLinkCheck must be a function");
+      return NULL;
+    }
+    testAfterSingleLinkCheck = argv[3];
   }
   ParentHandleRef *parent = get_parent_ref(env, argv[0]);
   if (!parent || parent->closed || parent->handle == INVALID_HANDLE_VALUE) {
@@ -964,6 +973,16 @@ static napi_value read_child_from_parent(napi_env env, napi_callback_info info) 
   if (!enforce_single_link_regular_file(child)) {
     napi_throw_error(env, NULL, "hardlink_policy: regular file is multi-linked or link metadata is unavailable");
     goto cleanup;
+  }
+  /* Test-only synchronization hook: deliberately runs after the link-count
+     check and before ReadFile so the harness can exercise the check/use gap. */
+  if (testAfterSingleLinkCheck) {
+    napi_value global, ignored;
+    if (napi_get_global(env, &global) != napi_ok ||
+        napi_call_function(env, global, testAfterSingleLinkCheck, 0, NULL, &ignored) != napi_ok) {
+      napi_throw_error(env, NULL, "test-only post-link-check callback failed");
+      goto cleanup;
+    }
   }
   size_t bytesToRead = (size_t)fileSize.QuadPart;
   char *data = (char *)calloc(bytesToRead ? bytesToRead : 1, 1);
