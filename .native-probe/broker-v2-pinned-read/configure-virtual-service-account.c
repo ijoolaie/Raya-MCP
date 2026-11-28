@@ -1,0 +1,6 @@
+#define UNICODE
+#define _UNICODE
+#include <windows.h>
+#include <winsvc.h>
+#include <stdio.h>
+int wmain(void){SC_HANDLE m=OpenSCManagerW(NULL,NULL,SC_MANAGER_CONNECT);if(!m){wprintf(L"OpenSCManager=%lu\n",GetLastError());return 1;}SC_HANDLE s=OpenServiceW(m,L"RayaFsBrokerV2Probe20261127",SERVICE_CHANGE_CONFIG|SERVICE_QUERY_CONFIG|SERVICE_START|SERVICE_QUERY_STATUS);if(!s){wprintf(L"OpenService=%lu\n",GetLastError());CloseServiceHandle(m);return 2;}const wchar_t *acct=L"NT SERVICE\\RayaFsBrokerV2Probe20261127";if(!ChangeServiceConfigW(s,SERVICE_NO_CHANGE,SERVICE_NO_CHANGE,SERVICE_NO_CHANGE,NULL,NULL,NULL,NULL,acct,NULL,NULL)){wprintf(L"ChangeServiceConfig=%lu\n",GetLastError());CloseServiceHandle(s);CloseServiceHandle(m);return 3;}DWORD need=0;QueryServiceConfigW(s,NULL,0,&need);QUERY_SERVICE_CONFIGW *q=(QUERY_SERVICE_CONFIGW*)HeapAlloc(GetProcessHeap(),0,need);if(!q||!QueryServiceConfigW(s,q,need,&need)){wprintf(L"QueryServiceConfig=%lu\n",GetLastError());return 4;}wprintf(L"SERVICE_ACCOUNT=%ls\n",q->lpServiceStartName);HeapFree(GetProcessHeap(),0,q);CloseServiceHandle(s);CloseServiceHandle(m);return 0;}

@@ -1100,3 +1100,11 @@ A later status check found a local uncommitted modification in `.native-probe/ha
 
 Phase 1 filesystem confinement remains IN PROGRESS / NOT ACCEPTED. The native HANDLE-relative work remains isolated test/probe code and is not integrated into Production handlers. Production filesystem confinement is not established as race-free; Production integration remains NO-GO.
 
+
+## 2026-11-27 Broker v2 named-pipe peer identity binding
+
+- Extended the isolated PR #19 service's authenticate_client path. It now obtains the OS-reported named-pipe client PID with GetNamedPipeClientProcessId, resolves that PID's session with ProcessIdToSessionId, impersonates the pipe peer, and reads TokenUser/TokenSessionId from the actual impersonation token. Both SID and session must match trusted configured values, and the PID-derived session must match the token session. No request-supplied identity is trusted.
+- Missing peer-PID API, invalid expected SID, failed token query, SID mismatch or session mismatch fails closed. RevertToSelf is mandatory; failure terminates the probe process rather than reusing a thread that may remain impersonated.
+- Added a non-elevated --peer-auth-test mode that exercises the exact service authenticate_client function over a real local named pipe. It checks peer PID, valid SID/session, wrong-SID denial, wrong-session denial and child cleanup: 9 checks passed locally.
+- The elevated acceptance runner now executes this peer-auth test before installing the disposable service. The shell used for this work is not elevated, so the full elevated service acceptance has not yet been rerun after this change. Do not claim that updated elevated acceptance passed until the user runs run-elevated-acceptance.ps1 from an elevated PowerShell window.
+- All changes remain in the isolated PR #19 worktree. The unrelated untracked READ-OPERATIONS-DESIGN.md in that worktree was left untouched.
