@@ -31,6 +31,7 @@ static SERVICE_STATUS g_status;
 static HANDLE g_stop_event;
 static HANDLE g_service_thread;
 static HANDLE g_root_handle = INVALID_HANDLE_VALUE;
+static HANDLE g_programdata_handle = INVALID_HANDLE_VALUE;
 static HANDLE g_config_handle = INVALID_HANDLE_VALUE;
 
 static void err(const wchar_t *where, DWORD e) {
@@ -301,6 +302,37 @@ static HANDLE open_relative_regular(HANDLE root, const wchar_t *leaf,
     return file;
 }
 
+static HANDLE open_relative_directory(HANDLE parent, const wchar_t *leaf,
+                                      ACCESS_MASK access)
+{
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    NtCreateFileFn nt = ntdll ? (NtCreateFileFn)GetProcAddress(ntdll, "NtCreateFile") : NULL;
+    UNICODE_STRING name;
+    OBJECT_ATTRIBUTES oa;
+    IO_STATUS_BLOCK iosb;
+    HANDLE directory = INVALID_HANDLE_VALUE;
+    size_t chars = wcslen(leaf);
+    if (!nt || parent == INVALID_HANDLE_VALUE || chars == 0 || chars > 255 ||
+        wcschr(leaf, L'\\') != NULL || wcschr(leaf, L'/') != NULL ||
+        wcscmp(leaf, L".") == 0 || wcscmp(leaf, L"..") == 0) {
+        SetLastError(ERROR_INVALID_NAME);
+        return INVALID_HANDLE_VALUE;
+    }
+    name.Buffer = (PWSTR)leaf;
+    name.Length = (USHORT)(chars * sizeof(wchar_t));
+    name.MaximumLength = name.Length;
+    InitializeObjectAttributes(&oa, &name, OBJ_CASE_INSENSITIVE | OBJ_DONT_REPARSE,
+                               parent, NULL);
+    NTSTATUS status = nt(&directory, access | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+        &oa, &iosb, NULL, FILE_ATTRIBUTE_DIRECTORY, FILE_SHARE_READ,
+        FILE_OPEN, FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT |
+        FILE_DIRECTORY_FILE, NULL, 0);
+    if (status < 0) {
+        SetLastError(ERROR_ACCESS_DENIED);
+        return INVALID_HANDLE_VALUE;
+    }
+    return directory;
+}
 static BOOL validate_regular_file(HANDLE file, FILE_STANDARD_INFO *standard)
 {
     FILE_ATTRIBUTE_TAG_INFO tag;
@@ -439,12 +471,34 @@ done:
     return ok;
 }
 
-static BOOL open_and_pin_config(PSID service_sid)
+static BOOL open_and_pin_programdata(void)
 {
-    HANDLE h = CreateFileW(CONFIG_PATH,
+    HANDLE h = CreateFileW(L"C:\\ProgramData",
         FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | READ_CONTROL | SYNCHRONIZE,
-        FILE_SHARE_READ, NULL, OPEN_EXISTING,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
         FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+    FILE_ATTRIBUTE_TAG_INFO tag;
+    FILE_STANDARD_INFO standard;
+    if (h == INVALID_HANDLE_VALUE) return FALSE;
+    if (GetFileType(h) != FILE_TYPE_DISK ||
+        !GetFileInformationByHandleEx(h, FileAttributeTagInfo, &tag, sizeof(tag)) ||
+        !GetFileInformationByHandleEx(h, FileStandardInfo, &standard, sizeof(standard)) ||
+        !(tag.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) ||
+        (tag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) ||
+        !standard.Directory || standard.DeletePending) {
+        DWORD e = GetLastError();
+        CloseHandle(h);
+        SetLastError(e == ERROR_SUCCESS ? ERROR_ACCESS_DENIED : e);
+        return FALSE;
+    }
+    g_programdata_handle = h;
+    return TRUE;
+}
+
+static BOOL open_and_pin_config(HANDLE parent, PSID service_sid)
+{
+    HANDLE h = open_relative_directory(parent,
+        L"RayaFsBrokerV2ProbeConfig-20261127", FILE_LIST_DIRECTORY | READ_CONTROL);
     FILE_ATTRIBUTE_TAG_INFO tag; FILE_STANDARD_INFO standard;
     PSID owner = NULL; PACL dacl = NULL; PSECURITY_DESCRIPTOR sd = NULL;
     SECURITY_DESCRIPTOR_CONTROL control = 0; DWORD revision = 0;
@@ -767,7 +821,8 @@ static void WINAPI service_main(DWORD argc,LPWSTR *argv){
     g_status.dwWaitHint=10000;SetServiceStatus(g_status_handle,&g_status);
     PSID expected=NULL,svc=NULL;DWORD session=0;PSECURITY_DESCRIPTOR psd=NULL;HANDLE pipe=INVALID_HANDLE_VALUE;
     if(!lookup_sid(SERVICE_ACCOUNT,&svc)||!verify_service_identity(svc)||
-       !open_and_pin_config(svc)||
+       !open_and_pin_programdata()||
+       !open_and_pin_config(g_programdata_handle,svc)||
        !read_policy_from_config(g_config_handle,svc,&expected,&session)||
        !open_and_pin_root(svc)||
        !validate_root_dacl(g_root_handle,svc,expected))goto failed;
@@ -792,12 +847,12 @@ static void WINAPI service_main(DWORD argc,LPWSTR *argv){
     if(pipe!=INVALID_HANDLE_VALUE)CloseHandle(pipe);pipe=INVALID_HANDLE_VALUE;
     if(g_stop_event)CloseHandle(g_stop_event);g_stop_event=NULL;
     if(g_service_thread)CloseHandle(g_service_thread);g_service_thread=NULL;
-    if(g_root_handle!=INVALID_HANDLE_VALUE)CloseHandle(g_root_handle);g_root_handle=INVALID_HANDLE_VALUE;if(g_config_handle!=INVALID_HANDLE_VALUE)CloseHandle(g_config_handle);g_config_handle=INVALID_HANDLE_VALUE;
+    if(g_root_handle!=INVALID_HANDLE_VALUE)CloseHandle(g_root_handle);g_root_handle=INVALID_HANDLE_VALUE;if(g_config_handle!=INVALID_HANDLE_VALUE)CloseHandle(g_config_handle);g_config_handle=INVALID_HANDLE_VALUE;if(g_programdata_handle!=INVALID_HANDLE_VALUE)CloseHandle(g_programdata_handle);g_programdata_handle=INVALID_HANDLE_VALUE;
     if(psd)LocalFree(psd);if(expected)LocalFree(expected);if(svc)LocalFree(svc);
     g_status.dwCurrentState=SERVICE_STOPPED;SetServiceStatus(g_status_handle,&g_status);return;
 failed:
     if(pipe!=INVALID_HANDLE_VALUE)CloseHandle(pipe);if(psd)LocalFree(psd);if(expected)LocalFree(expected);if(svc)LocalFree(svc);
-    if(g_root_handle!=INVALID_HANDLE_VALUE)CloseHandle(g_root_handle);g_root_handle=INVALID_HANDLE_VALUE;if(g_config_handle!=INVALID_HANDLE_VALUE)CloseHandle(g_config_handle);g_config_handle=INVALID_HANDLE_VALUE;
+    if(g_root_handle!=INVALID_HANDLE_VALUE)CloseHandle(g_root_handle);g_root_handle=INVALID_HANDLE_VALUE;if(g_config_handle!=INVALID_HANDLE_VALUE)CloseHandle(g_config_handle);g_config_handle=INVALID_HANDLE_VALUE;if(g_programdata_handle!=INVALID_HANDLE_VALUE)CloseHandle(g_programdata_handle);g_programdata_handle=INVALID_HANDLE_VALUE;
     if(g_service_thread)CloseHandle(g_service_thread);g_service_thread=NULL;
     g_status.dwWin32ExitCode=GetLastError();g_status.dwCurrentState=SERVICE_STOPPED;SetServiceStatus(g_status_handle,&g_status);
 }

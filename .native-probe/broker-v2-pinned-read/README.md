@@ -2,7 +2,7 @@
 
 Date: 2026-11-27
 
-Status: The revised independent-config layout passed elevated runtime acceptance on 2026-11-27. This is not Production integration and does not complete Phase 1.
+Status: The independent-config revision passed elevated runtime acceptance on 2026-11-27. The follow-up change pins the `C:\ProgramData` parent HANDLE and opens the config directory relative to it; this revision also passed elevated runtime acceptance on 2026-11-28. This is not Production integration and does not complete Phase 1.
 
 ## Candidate design
 
@@ -11,7 +11,7 @@ Status: The revised independent-config layout passed elevated runtime acceptance
 - Independent service-owned policy directory: `C:\ProgramData\RayaFsBrokerV2ProbeConfig-20261127`.
 - Protected broker image directory: `C:\ProgramData\RayaFsBrokerV2ProbeBin-20261127`.
 - Service startup verifies the dedicated service SID and rejects enabled Backup, Restore, Take Ownership, or Debug privileges.
-- The service opens and pins the config directory before reading `client.policy`. The config directory must be a non-reparse directory owned by the service SID, with a protected DACL containing exactly three full-control allow ACEs: service SID, SYSTEM, and Administrators.
+- The service opens and pins `C:\ProgramData` as a non-reparse directory HANDLE, then opens the config directory relative to that HANDLE with `NtCreateFile`, `RootDirectory`, `OBJ_DONT_REPARSE`, `FILE_OPEN_REPARSE_POINT`, and `FILE_DIRECTORY_FILE`. The config directory HANDLE is retained. The config directory must be a non-reparse directory owned by the service SID, with a protected DACL containing exactly three full-control allow ACEs: service SID, SYSTEM, and Administrators.
 - `client.policy` is opened relative to the pinned config HANDLE. Its same file HANDLE is checked for regular-file properties, single-link admission, service-SID ownership, and the exact protected three-principal DACL before parsing.
 - The workspace root is opened and pinned separately. Its protected DACL must contain exactly four allow ACEs: service SID, SYSTEM, Administrators (full control), and the authorized client SID (read-only).
 - Payload reads are relative to the pinned workspace HANDLE using `NtCreateFile`, `OBJECT_ATTRIBUTES.RootDirectory`, `OBJ_DONT_REPARSE`, and `FILE_OPEN_REPARSE_POINT`.
@@ -27,9 +27,9 @@ Status: The revised independent-config layout passed elevated runtime acceptance
 
 ## Trust-boundary limitations
 
-- The config directory is currently opened by its fixed absolute path under `C:\ProgramData`. The probe relies on the OS-protected parent directory; it does not yet pin the parent directory and open the config directory relative to that parent HANDLE. This must be addressed or explicitly accepted before Production.
+- The parent directory is now pinned before the config directory is opened relative to its HANDLE. The parent is checked as a disk directory and rejected if it is a reparse point or delete-pending. The config directory is separately checked for its exact protected DACL. The parent-relative open path passed compilation, local peer-auth tests, and elevated service acceptance on 2026-11-28, including positive read, invalid-request rejection, over-broad config/root DACL rejection, restricted-token denials, and verified cleanup.
 - `NumberOfLinks == 1` is an admission-time observation. A later hard-link creation may still occur; the current share mode does not prove that future hard links are impossible.
-- Elevated acceptance for the revised independent-config layout passed: peer-auth tests; positive read and invalid-request rejection; over-broad config and root DACL rejection; restricted-token write/ACL/metadata/child-create/image-write/hard-link denials; `BROKER_V2_PINNED_ROOT_ACCEPTANCE_PASS`; service/process/fixture/image/build-output cleanup verified.
+- The parent-relative config-open revision passed elevated acceptance on 2026-11-28: peer-auth integration; positive read and invalid-request rejection; over-broad config and root DACL rejection; restricted-token write/ACL/metadata/child-create/image-write/hard-link denials; `BROKER_V2_PINNED_ROOT_ACCEPTANCE_PASS`; service/process/fixture/image/build-output cleanup verified.
 - The real Windows overlapped-I/O cancellation/reaper lifecycle still needs kernel-backed tests; the PR #20 lifecycle model is synthetic.
 - One fixed root and one read-only operation only. Not wired into `server.mjs` or `advanced-tools.mjs`; existing handlers remain unchanged.
 - No second-host, different-user/session, full protocol, Supervisor/Worker lifecycle, crash/restart/tamper recovery, or provider portability acceptance.
