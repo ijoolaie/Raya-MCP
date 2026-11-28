@@ -2,6 +2,7 @@
 #define _UNICODE
 #define _WIN32_WINNT 0x0601
 #include <windows.h>
+#include <objbase.h>
 #include <winternl.h>
 #include <winsvc.h>
 #include <aclapi.h>
@@ -33,6 +34,7 @@ static HANDLE g_service_thread;
 static HANDLE g_root_handle = INVALID_HANDLE_VALUE;
 static HANDLE g_programdata_handle = INVALID_HANDLE_VALUE;
 static HANDLE g_config_handle = INVALID_HANDLE_VALUE;
+static PSID g_service_sid = NULL;
 
 static void err(const wchar_t *where, DWORD e) {
     fwprintf(stderr, L"%ls: %lu\n", where, e);
@@ -498,7 +500,7 @@ static BOOL open_and_pin_programdata(void)
 static BOOL open_and_pin_config(HANDLE parent, PSID service_sid)
 {
     HANDLE h = open_relative_directory(parent,
-        L"RayaFsBrokerV2ProbeConfig-20261127", FILE_LIST_DIRECTORY | READ_CONTROL);
+        L"RayaFsBrokerV2ProbeConfig-20261127", FILE_LIST_DIRECTORY | FILE_ADD_FILE | READ_CONTROL);
     FILE_ATTRIBUTE_TAG_INFO tag; FILE_STANDARD_INFO standard;
     PSID owner = NULL; PACL dacl = NULL; PSECURITY_DESCRIPTOR sd = NULL;
     SECURITY_DESCRIPTOR_CONTROL control = 0; DWORD revision = 0;
@@ -610,21 +612,105 @@ done:
     return ok;
 }
 
+/*
+ * Copy the admitted workspace object into a random, service-private file.
+ * FileLinkInformation does not require specific access on its source handle,
+ * so the workspace file's link count is only an admission check. The bytes
+ * actually returned to the client are read from this private single-link
+ * snapshot, created relative to the independently pinned config directory.
+ */
+static BOOL read_from_private_snapshot(HANDLE config, PSID service_sid,
+                                       const BYTE *source, DWORD length,
+                                       BYTE *output)
+{
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    NtCreateFileFn nt = ntdll ? (NtCreateFileFn)GetProcAddress(ntdll, "NtCreateFile") : NULL;
+    GUID id;
+    wchar_t guid[40], leaf[64], sddl[512];
+    UNICODE_STRING name;
+    OBJECT_ATTRIBUTES oa;
+    IO_STATUS_BLOCK iosb;
+    HANDLE snapshot = INVALID_HANDLE_VALUE;
+    PSECURITY_DESCRIPTOR sd = NULL;
+    LPWSTR service_text = NULL;
+    FILE_STANDARD_INFO standard;
+    LARGE_INTEGER zero;
+    DWORD written = 0, read = 0;
+    BOOL ok = FALSE, delete_marked = FALSE;
+    if (!nt || config == INVALID_HANDLE_VALUE || !service_sid || length > MAX_PAYLOAD ||
+        FAILED(CoCreateGuid(&id)) || StringFromGUID2(&id, guid, ARRAYSIZE(guid)) == 0 ||
+        !ConvertSidToStringSidW(service_sid, &service_text))
+        goto done;
+    if (_snwprintf_s(leaf, ARRAYSIZE(leaf), _TRUNCATE, L"snapshot-%ls.tmp", guid) < 0 ||
+        _snwprintf_s(sddl, ARRAYSIZE(sddl), _TRUNCATE,
+            L"O:%lsD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;%ls)(A;OICI;FA;;;BA)",
+            service_text, service_text) < 0 ||
+        !ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl, SDDL_REVISION_1, &sd, NULL))
+        goto done;
+    name.Buffer = leaf;
+    name.Length = (USHORT)(wcslen(leaf) * sizeof(wchar_t));
+    name.MaximumLength = name.Length;
+    InitializeObjectAttributes(&oa, &name, OBJ_CASE_INSENSITIVE | OBJ_DONT_REPARSE,
+                               config, sd);
+    NTSTATUS status = nt(&snapshot,
+        FILE_READ_DATA | FILE_WRITE_DATA | DELETE | FILE_READ_ATTRIBUTES |
+        READ_CONTROL | SYNCHRONIZE,
+        &oa, &iosb, NULL, FILE_ATTRIBUTE_NORMAL, 0, FILE_CREATE,
+        FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT |
+        FILE_NON_DIRECTORY_FILE, NULL, 0);
+    if (status < 0) {
+        SetLastError(ERROR_ACCESS_DENIED);
+        goto done;
+    }
+    if (!WriteFile(snapshot, source, length, &written, NULL) || written != length ||
+        !FlushFileBuffers(snapshot) ||
+        !GetFileInformationByHandleEx(snapshot, FileStandardInfo, &standard, sizeof(standard)) ||
+        !validate_regular_file(snapshot, &standard) ||
+        !validate_policy_file_security(snapshot, service_sid))
+        goto done;
+    zero.QuadPart = 0;
+    if (!SetFilePointerEx(snapshot, zero, NULL, FILE_BEGIN) ||
+        !ReadFile(snapshot, output, length, &read, NULL) || read != length)
+        goto done;
+    ok = TRUE;
+done:
+    if (snapshot != INVALID_HANDLE_VALUE) {
+        FILE_DISPOSITION_INFO disposition;
+        disposition.DeleteFile = TRUE;
+        delete_marked = SetFileInformationByHandle(snapshot, FileDispositionInfo,
+                                                     &disposition, sizeof(disposition));
+        CloseHandle(snapshot);
+        if (!delete_marked) ok = FALSE;
+    }
+    if (sd) LocalFree(sd);
+    if (service_text) LocalFree(service_text);
+    return ok;
+}
+
 static BOOL read_payload_from_root(HANDLE root, BYTE *data, DWORD *length)
 {
     HANDLE file = open_relative_regular(root, L"payload.txt", FILE_READ_DATA);
     FILE_STANDARD_INFO standard;
+    BYTE *source = NULL;
     DWORD n = 0;
     BOOL ok = FALSE;
     if (file == INVALID_HANDLE_VALUE)
         return FALSE;
-    if (!validate_regular_file(file, &standard) ||
-        !ReadFile(file, data, (DWORD)standard.EndOfFile.QuadPart, &n, NULL) ||
-        n != (DWORD)standard.EndOfFile.QuadPart)
+    if (!validate_regular_file(file, &standard) || standard.EndOfFile.QuadPart < 0 ||
+        (ULONGLONG)standard.EndOfFile.QuadPart > MAX_PAYLOAD)
+        goto done;
+    source = (BYTE *)HeapAlloc(GetProcessHeap(), 0,
+                               standard.EndOfFile.QuadPart ? (SIZE_T)standard.EndOfFile.QuadPart : 1);
+    if (!source ||
+        !ReadFile(file, source, (DWORD)standard.EndOfFile.QuadPart, &n, NULL) ||
+        n != (DWORD)standard.EndOfFile.QuadPart ||
+        !read_from_private_snapshot(g_config_handle, g_service_sid, source, n, data))
         goto done;
     *length = n;
     ok = TRUE;
 done:
+    if (source) HeapFree(GetProcessHeap(), 0, source);
     CloseHandle(file);
     return ok;
 }
@@ -715,22 +801,45 @@ done:
         SetLastError(ERROR_ACCESS_DENIED);
     return ok;
 }
+#define IO_CANCEL_DRAIN_MS 5000
+
+/*
+ * A pending OVERLAPPED and its event/buffer/pipe HANDLE remain owned by the
+ * caller until completion is observed. If the kernel does not signal within
+ * the bounded drain interval, terminate this disposable service process:
+ * process teardown is the final ownership boundary and we never free a live
+ * OVERLAPPED or close its event/pipe while the I/O may still reference them.
+ */
+static BOOL cancel_and_drain_io(HANDLE pipe, OVERLAPPED *ov, DWORD *transferred)
+{
+    DWORD wr;
+    (void)CancelIoEx(pipe, ov); /* ERROR_NOT_FOUND is a completion race; still drain. */
+    wr = WaitForSingleObject(ov->hEvent, IO_CANCEL_DRAIN_MS);
+    if (wr != WAIT_OBJECT_0) {
+        DWORD e = (wr == WAIT_TIMEOUT) ? ERROR_TIMEOUT : GetLastError();
+        err(L"overlapped I/O failed to drain; terminating isolated broker", e);
+        (void)TerminateProcess(GetCurrentProcess(), e ? e : ERROR_OPERATION_ABORTED);
+        ExitProcess(e ? e : ERROR_OPERATION_ABORTED);
+    }
+    return GetOverlappedResult(pipe, ov, transferred, FALSE);
+}
+
 static BOOL wait_io(HANDLE pipe,OVERLAPPED *ov,DWORD timeout,DWORD *transferred){
     HANDLE waits[2];DWORD count=0,wr;
     if(g_stop_event)waits[count++]=g_stop_event;
     waits[count++]=ov->hEvent;
     wr=WaitForMultipleObjects(count,waits,FALSE,timeout);
     if((g_stop_event&&wr==WAIT_OBJECT_0)||wr==WAIT_TIMEOUT){
-        CancelIoEx(pipe,ov);
-        WaitForSingleObject(ov->hEvent,INFINITE);
-        GetOverlappedResult(pipe,ov,transferred,FALSE);
+        BOOL completed = cancel_and_drain_io(pipe,ov,transferred);
+        if (completed) return TRUE; /* Completion won the cancellation race. */
         SetLastError(wr==WAIT_TIMEOUT?ERROR_TIMEOUT:ERROR_OPERATION_ABORTED);
         return FALSE;
     }
     if(wr!=WAIT_OBJECT_0+(g_stop_event?1:0)){
-        CancelIoEx(pipe,ov);
-        WaitForSingleObject(ov->hEvent,INFINITE);
-        GetOverlappedResult(pipe,ov,transferred,FALSE);
+        DWORD wait_error = GetLastError();
+        BOOL completed = cancel_and_drain_io(pipe,ov,transferred);
+        if (completed) return TRUE;
+        SetLastError(wait_error ? wait_error : ERROR_GEN_FAILURE);
         return FALSE;
     }
     return GetOverlappedResult(pipe,ov,transferred,FALSE);
@@ -820,7 +929,9 @@ static void WINAPI service_main(DWORD argc,LPWSTR *argv){
     g_status.dwControlsAccepted=SERVICE_ACCEPT_STOP|SERVICE_ACCEPT_SHUTDOWN;g_status.dwCurrentState=SERVICE_START_PENDING;
     g_status.dwWaitHint=10000;SetServiceStatus(g_status_handle,&g_status);
     PSID expected=NULL,svc=NULL;DWORD session=0;PSECURITY_DESCRIPTOR psd=NULL;HANDLE pipe=INVALID_HANDLE_VALUE;
-    if(!lookup_sid(SERVICE_ACCOUNT,&svc)||!verify_service_identity(svc)||
+    if(!lookup_sid(SERVICE_ACCOUNT,&svc))goto failed;
+    g_service_sid=svc;
+    if(!verify_service_identity(svc)||
        !open_and_pin_programdata()||
        !open_and_pin_config(g_programdata_handle,svc)||
        !read_policy_from_config(g_config_handle,svc,&expected,&session)||
@@ -848,10 +959,10 @@ static void WINAPI service_main(DWORD argc,LPWSTR *argv){
     if(g_stop_event)CloseHandle(g_stop_event);g_stop_event=NULL;
     if(g_service_thread)CloseHandle(g_service_thread);g_service_thread=NULL;
     if(g_root_handle!=INVALID_HANDLE_VALUE)CloseHandle(g_root_handle);g_root_handle=INVALID_HANDLE_VALUE;if(g_config_handle!=INVALID_HANDLE_VALUE)CloseHandle(g_config_handle);g_config_handle=INVALID_HANDLE_VALUE;if(g_programdata_handle!=INVALID_HANDLE_VALUE)CloseHandle(g_programdata_handle);g_programdata_handle=INVALID_HANDLE_VALUE;
-    if(psd)LocalFree(psd);if(expected)LocalFree(expected);if(svc)LocalFree(svc);
+    g_service_sid=NULL;if(psd)LocalFree(psd);if(expected)LocalFree(expected);if(svc)LocalFree(svc);
     g_status.dwCurrentState=SERVICE_STOPPED;SetServiceStatus(g_status_handle,&g_status);return;
 failed:
-    if(pipe!=INVALID_HANDLE_VALUE)CloseHandle(pipe);if(psd)LocalFree(psd);if(expected)LocalFree(expected);if(svc)LocalFree(svc);
+    if(pipe!=INVALID_HANDLE_VALUE)CloseHandle(pipe);g_service_sid=NULL;if(psd)LocalFree(psd);if(expected)LocalFree(expected);if(svc)LocalFree(svc);
     if(g_root_handle!=INVALID_HANDLE_VALUE)CloseHandle(g_root_handle);g_root_handle=INVALID_HANDLE_VALUE;if(g_config_handle!=INVALID_HANDLE_VALUE)CloseHandle(g_config_handle);g_config_handle=INVALID_HANDLE_VALUE;if(g_programdata_handle!=INVALID_HANDLE_VALUE)CloseHandle(g_programdata_handle);g_programdata_handle=INVALID_HANDLE_VALUE;
     if(g_service_thread)CloseHandle(g_service_thread);g_service_thread=NULL;
     g_status.dwWin32ExitCode=GetLastError();g_status.dwCurrentState=SERVICE_STOPPED;SetServiceStatus(g_status_handle,&g_status);
@@ -920,6 +1031,41 @@ static int client_test(void){
     return a&&b&&c&&d?0:2;
 }
 
+static int io_cancel_test(void)
+{
+    wchar_t pipe_name[160];
+    HANDLE server = INVALID_HANDLE_VALUE, client = INVALID_HANDLE_VALUE;
+    OVERLAPPED ov;
+    BYTE byte = 0;
+    DWORD transferred = 0;
+    BOOL ok = FALSE;
+    _snwprintf_s(pipe_name, ARRAYSIZE(pipe_name), _TRUNCATE,
+        L"\\\\.\\pipe\\RayaIoCancel-%lu-%lu", GetCurrentProcessId(), GetTickCount());
+    server = CreateNamedPipeW(pipe_name, PIPE_ACCESS_INBOUND | FILE_FLAG_OVERLAPPED,
+        PIPE_TYPE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS, 1, 1, 1, 1000, NULL);
+    if (server == INVALID_HANDLE_VALUE) goto done;
+    client = CreateFileW(pipe_name, GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
+    if (client == INVALID_HANDLE_VALUE) goto done;
+    if (!io_event_init(&ov)) goto done;
+    if (ReadFile(server, &byte, sizeof(byte), &transferred, &ov) ||
+        GetLastError() != ERROR_IO_PENDING)
+        goto done_event;
+    if (wait_io(server, &ov, 100, &transferred) || GetLastError() != ERROR_TIMEOUT)
+        goto done_event;
+    if (WaitForSingleObject(ov.hEvent, 0) != WAIT_OBJECT_0)
+        goto done_event;
+    if (GetOverlappedResult(server, &ov, &transferred, FALSE) ||
+        GetLastError() != ERROR_OPERATION_ABORTED)
+        goto done_event;
+    ok = TRUE;
+done_event:
+    CloseHandle(ov.hEvent);
+done:
+    if (client != INVALID_HANDLE_VALUE) CloseHandle(client);
+    if (server != INVALID_HANDLE_VALUE) CloseHandle(server);
+    wprintf(L"%ls kernel-backed CancelIoEx pending-read drain\n", ok ? L"PASS" : L"FAIL");
+    return ok ? 0 : 1;
+}
 static int peer_auth_client(const wchar_t *pipe_name)
 {
     HANDLE pipe = INVALID_HANDLE_VALUE;
@@ -1102,6 +1248,7 @@ done:
 }
 int wmain(int argc,wchar_t **argv){
     if(argc==2&&!wcscmp(argv[1],L"--peer-auth-test"))return peer_auth_test();
+    if(argc==2&&!wcscmp(argv[1],L"--io-cancel-test"))return io_cancel_test();
     if(argc==3&&!wcscmp(argv[1],L"--peer-auth-client"))return peer_auth_client(argv[2]);
     if(argc==2&&!wcscmp(argv[1],L"--prepare"))return prepare_fixture()?0:1;
     if(argc==2&&!wcscmp(argv[1],L"--install-image"))return install_image()?0:1;

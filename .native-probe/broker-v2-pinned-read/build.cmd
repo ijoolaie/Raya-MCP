@@ -8,7 +8,7 @@ if not defined VSROOT exit /b 2
 call "%VSROOT%\VC\Auxiliary\Build\vcvars64.bat" >nul
 if errorlevel 1 exit /b %ERRORLEVEL%
 pushd "%HERE%"
-cl /nologo /W4 /WX /TC broker-v2.c /link Advapi32.lib /OUT:broker-v2.exe
+cl /nologo /W4 /WX /TC broker-v2.c /link Advapi32.lib Ole32.lib /OUT:broker-v2.exe
 if errorlevel 1 goto fail
 cl /nologo /W4 /WX /TC configure-virtual-service-account.c /link Advapi32.lib /OUT:configure-virtual-service-account.exe
 if errorlevel 1 goto fail
